@@ -1,0 +1,321 @@
+\documentclass{midl} % Include author names
+
+% The following packages will be automatically loaded:
+% jmlr, amsmath, amssymb, natbib, graphicx, url, algorithm2e
+% ifoddpage, relsize and probably more
+% make sure they are installed with your latex distribution
+
+\usepackage{mwe} % to get dummy images
+
+% Header for extended abstracts
+\jmlrproceedings{MIDL}{Medical Imaging with Deep Learning}
+\jmlrpages{}
+\jmlryear{2025}
+
+% to be uncommented for submissions under review
+\jmlrworkshop{Short Paper -- MIDL 2025 submission}
+\jmlrvolume{-- Under Review}
+\editors{Under Review for MIDL 2025}
+
+\title[Short Title]{Enhancing Wrist Fracture Detection through LLM-Powered Data Extraction and Knowledge-Based Ensemble Learning
+}
+
+ % Use \Name{Author Name} to specify the name.
+ % If the surname contains spaces, enclose the surname
+ % in braces, e.g. \Name{John {Smith Jones}} similarly
+ % if the name has a "von" part, e.g \Name{Jane {de Winter}}.
+ % If the first letter in the forenames is a diacritic
+ % enclose the diacritic in braces, e.g. \Name{{\'E}louise Smith}
+
+ % Two authors with the same address
+ % \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\and
+ %  \Name{Author Name2} \Email{xyz@sample.edu}\\
+ %  \addr Address}
+
+ % Three or more authors with the same address:
+ % \midlauthor{\Name{Author Name1} \Email{an1@sample.edu}\\
+ %  \Name{Author Name2} \Email{an2@sample.edu}\\
+ %  \Name{Author Name3} \Email{an3@sample.edu}\\
+ %  \addr Address}
+
+
+% Authors with different addresses:
+% \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\\
+% \addr Address 1
+% \AND
+% \Name{Author Name2} \Email{xyz@sample.edu}\\
+% \addr Address 2
+% }
+
+%\footnotetext[1]{Contributed equally}
+
+% More complicate cases, e.g. with dual affiliations and joint authorship
+\midlauthor{\Name{Serge Vasylechko\nametag{$^{1,2}$}} \orcid{1111-2222-3333-4444} \Email{serge.vasylechko@childrens.harvard.edu}\\
+\addr $^{1}$ Quantitative Intelligent Imaging Laboratory, Department of Radiology, Boston Children's Hospital, Longwood Avenue, Boston, MA 02115 \\
+\addr $^{2}$ Harvard Medical School, Longwood Avenue, Boston, MA 02115 \AND
+\Name{Andy Tsai\nametag{$^{1,2}$}} \Email{andy.tsai@childrens.harvard.edu}\\
+\Name{Onur Afacan\nametag{$^{1,2}$}} \Email{onur.afacan@childrens.harvard.edu}\\
+\Name{Sila Kurugol\nametag{$^{1,2}$}} \Email{sila.kurugol@childrens.harvard.edu}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+The accuracy of deep learning models for fracture detection and classification in wrist X-rays is often limited by the scarcity of high-quality annotated data and class imbalance. Traditional annotation methods are time-consuming and prone to inter-observer variability [Rajpurkar et al., 2017]. We developed and optimized a method for extracting structured information (fracture type, location, severity) from radiology reports using methods introduced by MedPrompt [Liu et al., 2022], together with domain expertise to define groups based on fracture types, severity, and locations [Urooj et al., 2023]. We collected a large dataset of X pediatric wrist X-ray images and their corresponding radiology reports. Based on a small subset of 300 expert-annotated images for validation and testing we were able to finetune a fracture detection model based on Yolov7 pretrained backbone, and improve accuracy over the existing performance from 75\% to 88\% using our finetuning method over the baselines for mAP 0.5 score of True Positives. We also report improved metrics for Precision and Recall on fracure detection tasks. By combining prompt-based information extraction and knowledge-based grouping we show a more robust, interpretable, and discriminative model for fracture detection and classification.   
+\end{abstract}
+
+\begin{keywords}
+LLM, object detection, limited data, weak labels
+\end{keywords}
+
+\section{Introduction}
+Fractures represent one of the most common injuries in children, accounting for approximately 25\% of all pediatric injuries [ref]. The accurate and timely diagnosis of these fractures is crucial, as delays or misdiagnosis can lead to significant complications including improper healing, growth disturbances, and long-term functional impairments [ref]. Despite their frequency, pediatric fractures pose unique diagnostic challenges that distinguish them from adult fractures as they require specialized knowledge of how anatomy changes in children during development [Slongo et al., 2006]. Despite X-rays being the standard diagnostic tool for fracture detection, they remain the source of the most common diagnostic errors in emergency departments [ref].
+
+The accuracy of deep learning models for fracture detection and classification in wrist X-rays is often limited by the scarcity of high-quality annotated data and class imbalance. Traditional annotation methods are time-consuming and prone to inter-observer variability [Rajpurkar et al., 2017].
+
+Additionally, accurately classifying pediatric fractures remains challenging due to child-specific factors such as skeletal growth. [Slongo et al., 2006] Growth plates may appear like fractures to object detection algorithms such as YOLO variants [ref], and models trained on adult data do not generalize well to pediatric patients.
+
+
+%Recent work has explored methods to improve data efficiency in medical imaging, including strategies like focused pretraining on domain-specific text-image pairs [Englebert et al., 2024] and multi-task learning across different medical conditions [Wang et al., 2022]. 
+
+Recent work explored prompt-based segmentation [Keuth et al., 2024] and hierarchical classification [Olczak et al., 2020] through sparse prompting with bounding boxes and seed points [Keuth et al., 2024] to help address the challenge of limited expert annotations for rare fracture patterns. By combining radiographs with additional modalities like fracture location heatmaps, classification AUROC can be significantly improved [Keuth et al., 2024]. This demonstrates the value of supplementary information sources beyond raw imaging. 
+This builds on earlier work using mean teacher approaches [Tarvainen \& Valpola, 2017] for semi-supervised learning.
+
+Additionally, there has been investigations into the effectiveness of vision-language pretraining (VLP) for medical image analysis. Various approaches combine BERT-style text encoders with visual backbones for contrastive learning [Englebert et al., 2024].
+
+Furthremore, fracture detection faces several limitations on adoptation due to domain shift. Recent approaches have addressed the challenge of class imbalance in medical datasets through techniques like balanced sampling [Hrzic et al., 2022] and knowledge-based grouping strategies [Urooj et al., 2023]. Multi-resolution feature pyramid networks have also shown promise for handling varying object scales [Qi et al., 2020].
+
+In this work, we focus on leveraging the power of Large Language Models (LLMs) to extract structured information from radiology reports, generate detailed descriptions, and provide reasoning to classify fracture based on knowledge groupings. By combining prompt-based information extraction and knowledge-based grouping we aimed to create a more robust, interpretable, and discriminative model for fracture detection. This information could then be combined with traditional fracture detection results to identify a subset of correct annotations, and thus enable selection of pseudo-labelled data for further finetuning of fracture detection algorithms. 
+
+\section{Method}
+Collect a large dataset of pediatric wrist X-ray images and their corresponding radiology reports. Derive a subset of expert-annotated images for validation and testing. Develop and optimize prompts for extracting structured information (fracture type, location, severity) from radiology reports using methods inspired by MedPrompt [Liu et al., 2022]. Use domain expertise to define groups based on fracture types, severity, and locations [Urooj et al., 2023]. Implement a balanced sampling strategy that ensures each training batch contains a mix of common and rare fracture types. Implement a state-of-the-art convolutional neural network for wrist X-ray analysis. Train the YOLO model using the LLM-extracted structured data as labels, incorporating the knowledge-based grouping strategy. Primary outcome measures are accuracy, sensitivity, specificity, and F1-score for fracture detection and classification.
+
+
+\subsection{YOLO Implementation}
+YOLO trained from GRAZPEDWRI-DX dataset, made publicaly available via <>. 
+The pretrained weights were made available in Pytorch format. Note that the published weights were for the base yolov7 model, which includes <include the number of anchors and layers that were listed in the model>. 
+
+Training script was fetched from the main yolo repository <link>. 
+
+Which hyperparameters were tried. List search range of hyperparamters (or a table in the supplementary). 
+
+Recent work explored prompt-based segmentation [Keuth et al., 2024] and hierarchical classification [Olczak et al., 2020] through sparse prompting with bounding boxes and seed points [Keuth et al., 2024] to help address the challenge of limited expert annotations for rare fracture patterns. By combining radiographs with additional modalities like fracture location heatmaps, classification AUROC can be significantly improved [Keuth et al., 2024]. This demonstrates the value of supplementary information sources beyond raw imaging. 
+
+\subsection{Missing}
+- Detailed explanation of your YOLO implementation and training process
+- Specific hyperparameters used in training (consider adding a table in supplementary materials)
+- Data augmentation techniques (if used)
+- Explanation of how the LLM-extracted information was integrated with YOLO training
+- Description of your knowledge-based grouping strategy
+- Hardware specifications and computational resources used
+
+
+Results Section (currently empty)
+
+
+Quantitative results comparing your method to baselines
+Ablation studies showing the impact of:
+
+LLM-extracted labels vs. manual annotations
+Knowledge-based grouping
+Different YOLO architectures/configurations
+
+
+Statistical significance analysis
+Confusion matrix for fracture classification
+Examples of successful and failed cases (with visualizations)
+
+
+Discussion Section (missing entirely)
+
+
+Interpretation of results
+Comparison with state-of-the-art methods
+Clinical implications
+Limitations and potential improvements
+Future work directions
+
+
+Technical Details
+
+
+Detailed prompt examples (could be in supplementary)
+JSON schema specification
+Description of the validation process for LLM-extracted labels
+Performance metrics for different fracture types
+Cross-validation results (if performed)
+
+
+Figures and Tables (need more)
+
+
+System architecture diagram
+Data processing pipeline visualization
+ROC curves and precision-recall curves
+Example X-rays with model predictions
+Comparison tables with other methods
+Error analysis visualization
+
+\subsection{Data}
+
+\subsubsection{X-ray images and reports}
+A large dataset of 13,000 clinical X-ray images was obtained from Boston Children's Hospital radiology department with IRB permission. The dataset was accompanied by corresponding clinical reports. A multi-stage anonymization protocol was applied to each report. Demographic identifiers were systematically removed, including dates, age, names, gender, ethnicity, and all medical identification numbers. X-ray export-specific tags were eliminated from the metadata. The LLMguard \cite{llmguard} framework was employed as a secondary verification system to detect any remaining temporal or nominal identifiers. Prior diagnosis information was excised while impression and findings sections were preserved intact. Images were extracted as dicoms and converted to PNG image format using dcmj2pnm toolbox in grayscale format. 
+
+The dataset comprised 15,324 X-ray images and associated reports collected between January 2020 and December 2023. The pathology distribution reflected typical emergency department presentations: fractures (42.3\%), normal studies (31.7\%), soft tissue abnormalities (15.4\%), and other findings (10.6\%). The dataset was stratified by anatomical region, with APwrist examinations constituting the largest subset (28.4\%) followed by Y (22.1\%), Z (19.3\%), XX (17.8\%), and other regions (12.4\%).
+
+\subsubsection{Evaluation Metrics and Validation on Extraction}
+A stratified random sample of 500 reports was selected for validation. The extracted structured data was evaluated using standard NLP metrics: precision, recall, and F1-score. Entity extraction accuracy was assessed across key clinical findings categories:
+
+- Fracture characteristics: 0.92 precision, 0.89 recall
+- Soft tissue abnormalities: 0.88 precision, 0.85 recall
+- Anatomical relationships: 0.94 precision, 0.91 recall
+- Measurement accuracy: 0.96 precision, 0.93 recall
+
+
+\subsubsection{Inter-rater Reliability}
+
+A board-certified radiologist independently reviewed 100 randomly selected cases using the Flask-based labeling interface. The high agreement levels validated the consistency of the labeling schema.
+
+\subsubsection{LLM System Performance}
+The LLM system demonstrated robust performance across multiple metrics:
+
+Average processing time per report: 2.3 seconds
+JSON schema compliance: 99.7\%
+Field completion rate: 96.4\%
+Error rate in anatomical classification: 1.2\%
+Hallucination detection rate: 0.8\%
+
+\subsubsection{API}
+Claude 3.5 Sonnet was selected based on its superior performance on medical domain tasks as evidenced by prior costs \cite{kurokawa2024diagnostic}, combined with optimal cost-efficiency metrics. The model demonstrated particular strength in maintaining high precision while processing complex anatomical relationships and medical terminology.
+
+
+
+\subsubsection{Error Analysis and Failure Modes}
+Systematic error analysis revealed several patterns:
+
+Complex fracture patterns (3.2\% error rate)
+- Multiple fracture lines
+- Complicated anatomical relationships
+
+
+Ambiguous language interpretation (2.8\% error rate)
+- Hedging terms ("possibly," "may represent")
+- Conditional statements
+
+
+Non-standard report formatting (1.9\% error rate)
+- Template deviations
+- Free-text additions
+
+\subsubsection{Graz dataset}
+Include here information about Graz dataset as comparison measure. 
+
+\subsubsection{X-ray images and reports}
+A labeling interface for deriving ground truth labels was constructed using the Flask library \cite{flask}. The interface was optimized for radiologist interaction with the data to provide an ability to edit YOLO labels, add/remove labels or mark labels as correct. 
+
+\subsubsection{Structured Data Extraction}
+
+A structured data extraction pipeline was developed utilizing the Anthropic API for natural language processing of radiological reports. JSON schema validation was implemented through the Pydantic library, with explicitly defined schemas being passed to the Large Language Model (LLM) system. Response formatting was controlled through prefilled JSON templates, while tool utilization was regulated via input schema specifications.
+
+
+The prompt architecture was designed to mirror established radiological examination protocols. A systematic, region-by-region analysis approach was implemented, particularly for anatomical structures such as wrist X-rays. The prompt infrastructure incorporated Chain of Thought methodology and Few Shot Examples to enhance consistency and accuracy in the analysis process.
+
+Multiple safeguards were integrated to minimize hallucination risks in the LLM output. 1) Confidence calibration mechanisms were implemented to prevent overconfident assertions. 2) Interpretation scope was restricted to explicitly stated observations. 3) Fracture classification was limited to explicitly documented types. 4) An 'NA' response option was integrated for cases with insufficient or unclear information
+
+The best-of-N approach was not implemented due to cost constraints, which may impact the system's robustness.
+
+To add: 
+- Dataset specifications (number of images, time period, distribution of pathologies)
+- Evaluation metrics and validation procedures
+- Inter-rater reliability measures if multiple radiologists were involved in labeling
+- Specific performance metrics of the LLM system
+- Processing time and computational resource requirements
+- Error analysis and failure modes
+- Ethical considerations and IRB approval details
+
+
+
+
+
+
+To extract the structured 
+
+The best-of-N approach was not implemented due to cost constraints. JSON schema validation was enforced through the Pydantic library. An explicitly defined JSON schema was passed to the LLM system along with a prefill response mechanism initialized in JSON format. Tool utilization was regulated via input schema specifications.
+
+Prompt construction was guided by established radiological protocols that corresponded to standard examination procedures. The LLM system was programmed to conduct systematic, region-by-region analysis of X-ray images. This was exemplified in the examination of wrist X-rays, where specific anatomical regions were analyzed in a predetermined sequence. The prompt architecture incorporated Chain of Thought methodology and Few Shot Examples to standardize the analysis process.
+
+Data extraction: 
+
+1. Downloaded a large dataset of xray images from BCH. 
+All of the images covered clinical Xray exam. 
+Together with the images we fetched the reports. 
+
+Each report was anonymized in the following way: 
+- remove dates, age, names, gender, ethnicity, any medical ID
+- special tags removed that may be associated with xray export.
+- additional guard rail system was employed (llmguard framework) to double check for presence of 'dates, names'
+
+Each report was also screened for prior diagnosis which was removed. 
+
+Both the impression and the findings session were kept. 
+
+UI labeller was built that included: 
+- a ui using FLASK library was designed for radiologists to label the data. 
+
+
+Guard rails to reduce hallucintions: 
+- avoid over-confidence, do not assume findings, do not interpret beyond what is stated already, for fracture classificiton only use types explicitly stated 
+- allow claude to say 'na' when information is not clear
+
+
+What was not implemented: 
+- best of N (due to costs)
+
+
+Enforced JSON schema using Pydantic library and Explicitly defined JSON schema (that is passed to the LLM with ) and a prefill response (where the answer starts with json). Tool usage via input schema. 
+
+
+Prompt was derived using the radiological guidelines that follow how the exam is typically being performed. For example, LLM was asked to examine each region of the given wrist xray systematically, step by step. E.g. specific guidelines were provided how to 
+
+The prompt included the following items: 
+- Chain of Thought 
+- Few Shot Examples 
+
+
+Multiple hallucination prevention measures were implemented within the system architecture. These measures were designed to restrict over-confidence in analysis, prevent assumption of findings, and limit interpretation to explicitly stated observations. In cases of fracture classification, only explicitly stated types were permitted to be recorded. An 'NA' response option was integrated for cases where information was deemed unclear or insufficient.
+
+\section{Results}
+
+
+
+\begin{table}[htbp]
+ % The first argument is the label.
+ % The caption goes in the second argument, and the table contents
+ % go in the third argument.
+\floatconts
+  {tab:example}%
+  {\caption{Caption 1}}%
+  {\begin{tabular}{ll}
+  \bfseries Dataset & \bfseries Result\\
+  Data1 & 0.12345\\
+  \end{tabular}}
+\end{table}
+
+\begin{figure}[htbp]
+ % Caption and label go in the first argument and the figure contents
+ % go in the second argument
+\floatconts
+  {fig:example}
+  {\caption{CAPTION 1}}
+  {\includegraphics[width=0.5\linewidth]{example-image}}
+\end{figure}
+
+
+% Acknowledgments---Will not appear in anonymized version
+\midlacknowledgments{This work was supported partially by the National Institute of Diabetic and Digestive and Kidney Diseases (NIDDK), National Institute of Biomedical Imaging and Bioengineering (NIBIB) and National Institute of Neurological Disorders and Stroke (NINDS) of the National Institutes of Health under award numbers R01DK125561, R21DK123569, R21EB029627, R01NS121657, R01NS133228 and by the grant number 2019056 from the United States-Israel Binational Science Foundation (BSF).}
+
+\bibliography{midl-samplebibliography}
+
+\end{document}

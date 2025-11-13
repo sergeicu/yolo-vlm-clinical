@@ -1,0 +1,495 @@
+\documentclass{midl} % Include author names
+
+\usepackage{comment}
+
+% The following packages will be automatically loaded:
+% jmlr, amsmath, amssymb, natbib, graphicx, url, algorithm2e
+% ifoddpage, relsize and probably more
+% make sure they are installed with your latex distribution
+
+\usepackage{mwe} % to get dummy images
+
+% Header for extended abstracts
+\jmlrproceedings{MIDL}{Medical Imaging with Deep Learning}
+\jmlrpages{}
+\jmlryear{2025}
+
+% to be uncommented for submissions under review
+\jmlrworkshop{Full Paper -- MIDL 2025 submission}
+\jmlrvolume{-- Under Review}
+\editors{Under Review for MIDL 2025}
+
+\title[Short Title]{Enhancing Wrist Fracture Detection through LLM-Powered Data Extraction and Knowledge-Based Ensemble Learning
+}
+
+ % Use \Name{Author Name} to specify the name.
+ % If the surname contains spaces, enclose the surname
+ % in braces, e.g. \Name{John {Smith Jones}} similarly
+ % if the name has a "von" part, e.g \Name{Jane {de Winter}}.
+ % If the first letter in the forenames is a diacritic
+ % enclose the diacritic in braces, e.g. \Name{{\'E}louise Smith}
+
+ % Two authors with the same address
+ % \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\and
+ %  \Name{Author Name2} \Email{xyz@sample.edu}\\
+ %  \addr Address}
+
+ % Three or more authors with the same address:
+ % \midlauthor{\Name{Author Name1} \Email{an1@sample.edu}\\
+ %  \Name{Author Name2} \Email{an2@sample.edu}\\
+ %  \Name{Author Name3} \Email{an3@sample.edu}\\
+ %  \addr Address}
+
+
+% Authors with different addresses:
+% \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\\
+% \addr Address 1
+% \AND
+% \Name{Author Name2} \Email{xyz@sample.edu}\\
+% \addr Address 2
+% }
+
+%\footnotetext[1]{Contributed equally}
+
+% More complicate cases, e.g. with dual affiliations and joint authorship
+\midlauthor{\Name{Serge Vasylechko\nametag{$^{1,2}$}} \orcid{1111-2222-3333-4444} \Email{serge.vasylechko@childrens.harvard.edu}\\
+\addr $^{1}$ Quantitative Intelligent Imaging Laboratory, Department of Radiology, Boston Children's Hospital, Longwood Avenue, Boston, MA 02115 \\
+\addr $^{2}$ Harvard Medical School, Longwood Avenue, Boston, MA 02115 \AND
+\Name{Andy Tsai\nametag{$^{1,2}$}} \Email{andy.tsai@childrens.harvard.edu}\\
+\Name{Onur Afacan\nametag{$^{1,2}$}} \Email{onur.afacan@childrens.harvard.edu}\\
+\Name{Sila Kurugol\nametag{$^{1,2}$}} \Email{sila.kurugol@childrens.harvard.edu}
+}
+
+\begin{document}
+
+% \maketitle
+
+\begin{abstract}
+The accuracy and generalization of deep learning models for fracture detection and classification in wrist radiographs is often limited by the scarcity of high-quality annotated data and class imbalances. Traditional annotation methods are time-consuming, expensive and prone to inter-observer variability \cite{rajpurkar2017mura}.  To address these challenges, we developed an automated, cost-free approach to extract structured information from radiology reports, such as fracture anatomical location, classification type, healing stage, and alignment status. Our technique incorporates methods introduced by MedPrompt \cite{nori2023can}, and leverages domain expertise for group based sampling \cite{khan2024knowledge}. Using these structured language labels alongside a pre-trained YOLO v7 backbone \cite{nagy2022pediatric, ciri2023bonefracture}, which initially demonstrated low accuracy scores on our clinical data, we developed multiple YOLO architectures capable of detection and classification across four clinically critical: (1) anatomical localization (distal radius, distal ulna, ulnar styloid, scaphoid), (2) fracture pattern recognition (Salter-Harris types I-IV, buckle/torus, greenstick), (3) healing stage assessment (acute, healing, healed, nonunion), and (4) displacement evaluation (well-aligned, acceptable alignment, poor alignment).  This approach utilized the extracted language labels without requiring expert annotations for training. We curated a large dataset of 30,000 pediatric wrist X-ray images and their corresponding radiology reports. Validation and testing were conducted on a smaller subset of 300 expert-annotated images.
+Our findings indicate that this pseudo-blind training strategy significantly enhances the base accuracy of the pre-trained model, achieving performance comparable to models fine-tuned with meticulously labeled expert annotations, and provides additional classification based on distinct classification tasks. Specifically, we improved the mean Average Precision (mAP) detection score for true positives related to fractures from 76\% to 83\%. Additionally, we observed improvements in precision and recall metrics for fracture detection. By integrating prompt-based information extraction with knowledge-based grouping, we achieved a robust and effective model for fracture detection. Our code and supplementary material are provided at www.github.com/sergeicu/yolostructured.  
+\end{abstract}
+
+\begin{keywords}
+LLM, object detection, limited data, weak labels
+\end{keywords}
+
+\section{Introduction}
+Fractures represent one of the most common injuries in children, accounting for approximately 25\% of all pediatric injuries \cite{butler2023epidemiology}. Accurate and timely diagnosis is crucial, as delays can lead to significant complications including improper healing and long-term functional impairments \cite{tadepalli2022nonaccidental}. Despite their frequency, pediatric fractures pose unique diagnostic challenges due to developing anatomy \cite{marsh2007fracture}, with X-rays remaining the source of common diagnostic errors in emergency departments \cite{newman2023diagnostic}.
+
+The diagnostic performance of deep learning methods in fracture detection remains constrained by insufficient expertly annotated datasets and class distribution skewness. Traditional annotation methods requiring bounding boxes are time-consuming and yield inter-observer variability, as radiologists typically only mark areas with arrows or describe findings in reports~\cite{martin2024manual}. This particularly affects rare fracture patterns and child-specific factors such as growth plates that may appear like fractures to detection algorithms \cite{marsh2007fracture}.
+
+While data scarcity poses challenges, fine-tuning pre-trained models offers promising solutions. YOLO architectures demonstrate notable efficiency, requiring as few as 2,000 images for medical applications \cite{montalbo2020computer}, with fine-tuning scenarios achieving optimal performance using only 200-300 samples \cite{li2018new}. Recent approaches have explored pseudo-labeling to reduce annotation burden, such as leveraging Segment Anything Model (SAM) \cite{mazurowski2023segment} for creating labels from weakly supervised regions \cite{keuth2024sam}.
+
+The emergence of vision language models (VLMs) and large language models (LLMs) has enhanced contextual understanding of both image and text modalities. Research has shown that VLM-based scene understanding can improve YOLO object detection performance \cite{rouhi2025enhancing}, while methods integrating bounding box predictions with language models show promise \cite{zang2024contextual}.
+
+This work explores how LLMs can extract structured information from radiology reports to support YOLO training through knowledge-based grouping. By combining prompt-based information extraction with traditional fracture detection, we develop a more robust model for identifying accurate pseudo-labels, enabling improved pediatric fracture detection without additional expert annotation costs.
+
+\subsection{Clinical Necessity for Multi-Dimensional Fracture Assessment}
+Effective pediatric fracture management requires simultaneous evaluation across multiple clinical dimensions, each carrying distinct therapeutic implications. Anatomical localization determines surgical approach and healing expectations, with scaphoid fractures requiring prolonged immobilization compared to distal radius injuries [cite]. Fracture pattern recognition is particularly critical in pediatric cases, where Salter-Harris classifications directly influence growth plate prognosis and long-term outcomes [cite], while buckle/torus and greenstick fractures often allow conservative management.
+
+Healing stage assessment guides treatment duration and intervention timing. Acute fractures require immediate stabilization, while healing fractures may need activity modification, and nonunion cases require surgical intervention [cite]. Displacement evaluation is arguably the most time-sensitive factor, as poor alignment often necessitates immediate reduction to prevent malunion and functional impairment [cite]. Current clinical workflows require radiologists to mentally integrate these four dimensions, a cognitively demanding process prone to oversight, particularly in busy emergency departments where pediatric fractures are commonly encountered.
+
+Traditional computer-aided detection systems focus solely on fracture presence, providing limited clinical utility. Our multi-task approach addresses this gap by providing comprehensive fracture characterization that directly supports clinical decision-making, potentially reducing diagnostic errors and improving treatment selection.
+
+\section{Method}
+
+\begin{figure}[!ht]
+\floatconts
+  {fig:fig1}
+  {\caption{A. YOLO pre-trained on 20,000+ pediatric X-ray images from elsewhere correctly interpreted Salter-Harris II fracture of distal radius (pink, bottom) on our pediatric dataset (BCH), but it missed distal ulna fracture (red arrow) and incorrectly annotated three metacarpals as fractures (pink, top).
+B. UMAP projection of the YOLO features for 30 images from BCH and GRAZ datasets shows substantial domain shift. }}
+  {\includegraphics[width=0.6\linewidth]{ims/fig1.png}}
+\end{figure}
+
+
+\begin{table}[htbp]
+\centering
+\caption{Fracture Dataset Class Distribution}
+\label{tab:fracture_simple}
+\begin{tabular}{|l|l|c|c|}
+\hline
+\textbf{Dataset Type} & \textbf{Class} & \textbf{Count} & \textbf{Percentage} \\
+\hline
+Anatomical Regions & Distal Radius & 37,676 & 53.5\% \\
+& Distal Ulna & 12,589 & 17.9\% \\
+& Ulnar Styloid & 9,122 & 12.9\% \\
+& Scaphoid & 2,709 & 3.8\% \\
+& No Fracture & 8,347 & 11.8\% \\
+\hline
+Classification & Salter Harris & 5,031 & 25.0\% \\
+& Non-Salter Harris & 15,119  & 75.0\% \\
+\hline
+Healing & Acute & 5,202 & 15.0\% \\
+& Healing & 29,575 & 85.0\% \\
+\hline
+Displacement & Aligned & 47,974 & 77.8\% \\
+& Not Aligned & 13,683 & 22.2\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{comment}
+\begin{table}[htbp]
+\centering
+\caption{Fracture Dataset Class Distribution}
+\label{tab:fracture_simple}
+\begin{tabular}{|l|l|c|c|}
+\hline
+\textbf{Dataset Type} & \textbf{Class} & \textbf{Count} & \textbf{Percentage} \\
+\hline
+Anatomical Regions & distal\_radius\_shaft & 7,299 & 70.1\% \\
+& distal\_ulna\_shaft & 2,871 & 27.6\% \\
+& ulnar\_styloid & 1,685 & 16.2\% \\
+& scaphoid & 418 & 4.0\% \\
+& no\_fracture & 2,750 & 26.4\% \\
+\hline
+Classification & transverse & 2,307 & 26.0\% \\
+& salter\_harris\_II & 2,263 & 25.5\% \\
+& buckle & 1,244 & 14.0\% \\
+& comminuted & 244 & 2.7\% \\
+& avulsion & 99 & 1.1\% \\
+& no\_fracture & 2,750 & 31.0\% \\
+\hline
+Healing & healing & 6,008 & 64.9\% \\
+& acute & 1,325 & 14.3\% \\
+& healed & 255 & 2.8\% \\
+& nonunion & 129 & 1.4\% \\
+& no\_fracture & 2,750 & 29.7\% \\
+\hline
+Alignment & well\_aligned & 6,712 & 67.4\% \\
+& acceptable\_alignment & 2,171 & 21.8\% \\
+& poor\_alignment & 327 & 3.3\% \\
+& no\_fracture & 2,750 & 27.6\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\end{comment}]
+\begin{comment}
+    
+
+\begin{table}[htbp]
+\centering
+\caption{Complete Dataset Distribution - All Available Categories}
+\label{tab:fracture_complete}
+\begin{tabular}{|l|l|c|c|}
+\hline
+\textbf{Category} & \textbf{Class} & \textbf{Count} & \textbf{Percentage} \\
+\hline
+Anatomical Regions & distal\_radius\_shaft & 7,299 & 47.7\% \\
+& distal\_ulna\_shaft & 2,871 & 18.8\% \\
+& not\_applicable & 2,750 & 18.0\% \\
+& ulnar\_styloid & 1,685 & 11.0\% \\
+& scaphoid & 418 & 2.7\% \\
+& unknown & 137 & 0.9\% \\
+& other & 98 & 0.6\% \\
+& radial\_styloid & 21 & 0.1\% \\
+& radius\_other & 21 & 0.1\% \\
+& proximal\_radius & 4 & 0.0\% \\
+& ulna\_other & 2 & 0.0\% \\
+& proximal\_ulna & 1 & 0.0\% \\
+\hline
+Classification & unknown & 5,976 & 39.0\% \\
+& not\_applicable & 2,750 & 18.0\% \\
+& transverse & 2,307 & 15.1\% \\
+& salter\_harris\_II & 2,263 & 14.8\% \\
+& buckle & 1,244 & 8.1\% \\
+& comminuted & 244 & 1.6\% \\
+& oblique & 226 & 1.5\% \\
+& avulsion & 99 & 0.6\% \\
+& other & 98 & 0.6\% \\
+& salter\_harris\_IV & 39 & 0.3\% \\
+& greenstick & 36 & 0.2\% \\
+& salter\_harris\_I & 25 & 0.2\% \\
+\hline
+Healing & healing & 6,008 & 39.3\% \\
+& unknown & 4,840 & 31.6\% \\
+& not\_applicable & 2,750 & 18.0\% \\
+& acute & 1,325 & 8.7\% \\
+& healed & 255 & 1.7\% \\
+& nonunion & 129 & 0.8\% \\
+\hline
+Alignment & well\_aligned & 6,712 & 43.8\% \\
+& unknown & 3,347 & 21.9\% \\
+& not\_applicable & 2,750 & 18.0\% \\
+& acceptable\_alignment & 2,171 & 14.2\% \\
+& poor\_alignment & 327 & 2.1\% \\
+\hline
+Immobilization & unknown & 7,588 & 49.6\% \\
+& cast & 4,959 & 32.4\% \\
+& not\_applicable & 2,750 & 18.0\% \\
+& other & 10 & 0.1\% \\
+\hline
+Fracture Count & 0 & 2,750 & 18.0\% \\
+& 1 & 3,419 & 22.3\% \\
+& 2 & 8,180 & 53.4\% \\
+& 3 & 813 & 5.3\% \\
+& 4 & 140 & 0.9\% \\
+& 5 & 5 & 0.0\% \\
+\hline
+Has Fracture & True & 12,557 & 82.0\% \\
+& False & 2,750 & 18.0\% \\
+\hline
+\end{tabular}
+\end{table}
+\end{comment}
+
+
+% Add these packages to your preamble if not already included
+% \usepackage{graphicx}
+% \usepackage{float}
+
+\begin{comment}
+% Figure 6: Distribution of Fracture Counts
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{ims/num_fractures.png}
+    \caption{Distribution of fracture counts per case in the dataset. This distribution indicates that most clinical cases in the dataset involve multiple fractures, which is consistent with the complex nature of pediatric wrist injuries.}
+    \label{fig:fracture_count_distribution}
+\end{figure}
+
+% Figure 1: Alignment Category Cross-Tabulations
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{ims/tabulations_alignment.png}
+    \caption{Cross-tabulation heatmaps showing the distribution of alignment categories against other dataset features. The figure displays six heatmaps examining alignment category relationships with: (top row) anatomical region, healing category, and classification category; (bottom row) fracture count, immobilization type, and imaging side. Color intensity represents frequency counts, with darker colors indicating higher frequencies. The alignment categories include well\_aligned, acceptable\_alignment, poor\_alignment, unknown, and not\_applicable.}
+    \label{fig:alignment_crosstab}
+\end{figure}
+
+% Figure 2: Anatomical Region Cross-Tabulations
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{ims/tabulations_anatomical_region.png}
+    \caption{Cross-tabulation heatmaps showing the distribution of anatomical regions against other dataset features. The figure displays six heatmaps examining anatomical region relationships with: (top row) alignment category, healing category, and classification category; (bottom row) fracture count, immobilization type, and imaging side. Color intensity represents frequency counts, with darker colors indicating higher frequencies. The anatomical regions include distal\_radius\_shaft, distal\_ulna\_shaft, ulnar\_styloid, scaphoid, and several other less frequent regions.}
+    \label{fig:anatomical_crosstab}
+\end{figure}
+
+% Figure 3: Classification Category Cross-Tabulations
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{ims/tabulations_classification.png}
+    \caption{Cross-tabulation heatmaps showing the distribution of fracture classification categories against other dataset features. The figure displays six heatmaps examining classification category relationships with: (top row) anatomical region, healing category, and alignment category; (bottom row) fracture count, immobilization type, and imaging side. Color intensity represents frequency counts, with darker colors indicating higher frequencies. The classification categories include transverse, salter\_harris\_II, buckle, comminuted, avulsion, and several other fracture types, with a large proportion classified as unknown.}
+    \label{fig:classification_crosstab}
+\end{figure}
+
+% Figure 4: Fracture Count Cross-Tabulations
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{ims/tabulations_fracture_count.png}
+    \caption{Cross-tabulation heatmaps showing the distribution of fracture counts (0-5 fractures per image) against other dataset features. The figure displays six heatmaps examining fracture count relationships with: (top row) anatomical region, healing category, and classification category; (bottom row) alignment category, immobilization type, and imaging side. Color intensity represents frequency counts, with darker colors indicating higher frequencies. The majority of cases show 2 fractures per image, with decreasing frequency for higher fracture counts.}
+    \label{fig:fracture_count_crosstab}
+\end{figure}
+
+% Figure 5: Healing Category Cross-Tabulations
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{ims/tabulations_healing.png}
+    \caption{Cross-tabulation heatmaps showing the distribution of healing categories against other dataset features. The figure displays six heatmaps examining healing category relationships with: (top row) anatomical region, alignment category, and classification category; (bottom row) fracture count, immobilization type, and imaging side. Color intensity represents frequency counts, with darker colors indicating higher frequencies. The healing categories include healing, acute, healed, nonunion, with a substantial proportion classified as unknown or not\_applicable.}
+    \label{fig:healing_crosstab}
+\end{figure}
+
+\end{comment}
+
+\subsection{Structured Information Extraction System}
+A comprehensive natural language processing pipeline was developed to extract multi-class structured information from radiological reports to support training of four separate YOLO models, each specialized for distinct clinical assessment tasks.
+
+1. Anatomical Location Classification which identified specific fracture locations including distal radius shaft, distal ulna shaft, ulnar styloid, and scaphoid. 2. Categorizing  Salter-Harris II and Salter Harris IV fractures from other fractures. 3. Determining fracture healing status. 4. Assessing fracture alignment. 
+
+This specialized approach allows each YOLO model to develop optimized feature representations for its specific classification task, while the structured LLM extraction provides consistent, high-quality training labels across all four clinical dimensions without requiring separate expert annotation.
+
+For data extraction we utilized MedGemma 27B model \cite{gemma?} given its advanced performance in medical domain tasks \cite{cite?}. 
+
+
+\subsubsection{Schema Validation}
+The following steps were implemented to ensure that the responses from the LLM adhered to a strict predictable structured response pattern:
+1. Report Pre-processing: The initial step involved removing non-standard characters and normalizing medical abbreviations according to RADLEX terminology standards \cite{langlotz2006radlex}. 
+2. Schema Design: A schema was created to capture the hierarchical relationships between anatomical structures, fracture characteristics, and associated findings.
+3. Core Extraction: The main extraction process utilized explicitly defined JSON structures passed to the LLM system, with response formatting managed through prefilled templates.
+4. Type Validation: Type validation was enforced using Pydantic \cite{pydantic} to ensure structured response patterns.
+
+\subsubsection{Prompt Engineering and Safeguards}
+To minimize hallucination risks, we implemented: (1) Chain-of-Thought reasoning \cite{nori2023can} aligned with radiological protocols, (2) Curated few-shot examples for fracture patterns, (3) Strict "explicitly stated observations" scope, and (4) Comprehensive confidence scoring and audit trails. 
+
+\begin{figure}[!ht]
+\floatconts
+  {fig:fig2}
+  {\caption{Overview of the proposed method. Radiological report is passed through LLMguard framework to remove all PHI and unncessary exam data, followed by API call to Sonnet 3.5 LLM with strict JSON input/output rules, chain-of-thought reasoning over clinical radiological examination guidelines, few shot examples and Pydantic control over datatypes. The resulting JSON is checked for consistency by 1. number of fractures 2. visual cues alignment via VLM. The full pipeline is fully automated and requires zero radiologist intervention.  Resulting correct samples are used to finetune YOLO model. }}
+  {\includegraphics[width=0.8\linewidth]{ims/fig2.png}}
+\end{figure}
+
+\subsection{Pseudo-Labelling}
+We utilize YOLOv7 \cite{wang2023yolov7} pretrained on GRAZPEDWRI-DX dataset \cite{nagy2022pediatric} for initial labeling. To address the domain shift between datasets (Figure 1b) that limits accuracy to 76\%, we developed two strategies: 1. Single fracture focus: Prioritizing cases with isolated fractures to reduce location mismatches. 2. VLM verification: Using vision-language models to verify anatomical correctness of detected regions \cite{al2025open}.
+
+\subsubsection{Matching YOLO labels}
+
+The simplest method to match YOLO labels with radiological fractures involves counting the number of fractures mentioned in the report and checking if YOLO has labeled the same number of fractures in the corresponding images. However, several challenges can arise: 1) YOLO labels may be misplaced, such as incorrectly marking phalanges instead of actual fractures (as shown in Figure 1a), 2) not all images from the examination may display all fractures.
+To address these issues, we utilized an additional Vision Language Model.  Although non-medical LLMs are not specifically trained to detect the location, class, or severity of fractures, they have been shown to be surprisingly effective at understanding general anatomy in medical images \cite{al2025open}. To enhance our system's accuracy, we can encode the YOLO-labeled image along with the clearly visible bounding box into base64 format and query the VLM to determine whether a specific area of the image is highlighted. This provides an additional "guardrail" for our system, improving label matching with actual fractures.
+It is important to note that in radiology reporting certain fractures can be visible in the Anterior-Posterior images, while others are better visible in Lateral images. Since the radiology extracted texts do not mention in which image certain fractures are visible, we require to deduce this information based on knowledge tree. We encode the following: 1) Lateral images cannot distinguish between Distal Radius or Distal Ulna fractures, and often only one can be visible b) Lateral images cannot encode ulnar styloid fractures c) AP images will encode most fractures, however would not always show mis-alignment in ulna or radius bone. 
+
+
+\subsection{Data Collection}
+An extensive dataset of 71714 clinical pediatric X-ray examinations was retrospectively acquired from Boston Children's Hospital radiology department under an appropriate IRB protocol. The dataset included clinical radiology reports spanning January 2001 through August 2024. Each examination consisted of multiple image projections following standard radiological protocols, including anteroposterior, lateral, oblique and scaphoid views when clinically indicated. 
+
+\subsubsection{Anonymization Procedure}
+A multi-stage anonymization protocol was implemented to ensure data privacy and  compliance before conducting LLM operations. First, a rule-based system was employed to remove explicit identifiers, including dates, age, names, gender, medical record numbers and other tags related to protected health information. Additionally, DICOM metadata was stripped of patient and exam specific identifiers. Following this initial step, LLMguard framework \cite{llmguard} was used as an extra verification layer to detect any remaining nominal identifiers.
+
+\subsection{Annotation}
+\subsubsection{Data}
+A stratified random sample of 300 reports was selected for detailed validation, with stratification based on fracture types and anatomical locations. A board-certified radiologist independently reviewed 300 selected reports and corresponding images. To facilitate this process, a labeling interface for deriving reference bounding boxes was constructed using the Flask library \cite{flask}. This interface allowed the radiologist to access all images associated with each report, view the anonymized report itself, and create bounding box labels.
+ The reference dataset was then divided into three parts: 214 images for fine-tuning the reference method, 16 images for validation, and 70 images for testing various methods, including the proposed method and comparison methods.
+
+\begin{comment}
+% The final dataset consisted of grayscale PNG images, and corresponding radiology reports in the JSON format. 
+\begin{table}[h]
+\centering
+\caption{Distribution of Wrist Fractures and Their Characteristics}
+\begin{tabular}{lrr}
+\hline
+\textbf{Characteristic} & \textbf{Count} & \textbf{Percentage (\%)} \\
+\hline
+\multicolumn{3}{l}{\textit{Anatomical Location}} \\
+Radius & 934 & 86.2 \\
+Scaphoid & 94 & 8.7 \\
+Ulna & 41 & 3.8 \\
+Other & 14 & 1.3 \\
+\hline
+\multicolumn{3}{l}{\textit{Fracture Region}} \\
+Distal & 717 & 66.2 \\
+Metaphysis & 267 & 24.7 \\
+Other & 99 & 9.1 \\
+\hline
+\multicolumn{3}{l}{\textit{Fracture Pattern}} \\
+Transverse & 230 & 21.2 \\
+Torus & 149 & 13.8 \\
+Simple & 74 & 6.8 \\
+Oblique & 26 & 2.4 \\
+Comminuted & 23 & 2.1 \\
+\hline
+\multicolumn{3}{l}{\textit{Healing Stage}} \\
+Healing & 543 & 50.1 \\
+Acute & 261 & 24.1 \\
+Early Healing & 101 & 9.3 \\
+Other & 178 & 16.5 \\
+\hline
+\end{tabular}
+\label{tab:fracture_distribution}
+\end{table}
+
+\end{comment}
+
+\subsection{YOLO}
+\subsubsection{Architecture}
+Four separate YOLO v7 models were trained, each optimized for a specific clinical classification task. Each model utilized the standard YOLO v7 architecture with a 5-stage backbone featuring 32 to 1024 channels for feature extraction and a detection head with SPPCSPC module. Nine anchor boxes were distributed across three scales, and RepConv blocks were employed for final feature refinement before prediction. The key innovation lies not in architectural modifications but in task-specific training strategies that allow each model to develop specialized feature representations for anatomical localization, fracture pattern recognition, healing assessment, or alignment evaluation.
+
+\subsubsection{Training}
+Each specialized YOLO model was trained using identical technical parameters but different label sets extracted from the LLM processing pipeline. The training utilized multi-scale strategy with 1280×1280 base resolution and batch size of 16. SGD optimizer was configured with learning rate of 0.001, momentum of 0.937, and weight decay of 0.0001. A one-cycle policy with cosine annealing and 3-epoch warmup period provided learning rate scheduling.
+
+The anatomical localization model was trained to detect and classify distal radius, distal ulna, ulnar styloid, and scaphoid fracture locations. The fracture pattern model specialized in recognizing Salter-Harris classifications, which are essential in pediatric diagnosis of physeal fractures. The healing assessment model learned to distinguish acute fractures requiring immediate intervention or healing fractures. The alignment evaluation model focused on displacement assessment critical for reduction decisions.
+
+Training datasets remained consistent across all models, comprising manually annotated expert labels, small pseudo-annotated dataset, and large pseudo-annotated dataset, but with different classification targets extracted from the structured LLM output for each specialized model.
+
+Loss function was tuned tuned for X-ray image detection: classification loss weight was reduced (0.1), objectness loss weight was increased (0.8), and IoU threshold was lowered (0.15) to accommodate imprecise fracture region boundaries. Augmentation was added as per X-ray data needs with  geometric transformations (rotation ±10°, scale ±0.5, shear ±0.2), brightness variation (HSV ±0.3, to simulate exposure variations). Complex augmentations (mosaic, mixup) were disabled to preserve anatomical coherence. Training was conducted on NVIDIA A100 GPUs. 
+The training process incorporated a balanced sampling strategy ensuring representation of both common and rare fracture types within each batch. There were two principal types of dataset. The reference dataset included 300 radiologist labels, as described in the section above. 300 images were split into 214 images for finetuning, 16 images for validation and 70 images for testing. 
+Training involved 3 datasets: a) manually annotated dataset by expert radiologist (230 images) b) small pseudo-annotated dataset (300 images) c) large pseudo-annotated dataset (71,714 images). 
+\subsection{Evaluation}
+\subsubsection{Quantitative Evaluation}
+The extracted structured data was evaluated using standard metrics. Analysis of fracture characteristics was measured for precision, recall and F1 scores.
+
+
+\section{Results}
+Our pseudo-blind finetuning approach with the large dataset achieved superior performance across key metrics compared to baseline models. For basic fracture detection, the method improved mean Average Precision (mAP) from 0.789 (Graz pretrained) to 0.822, while maintaining high confidence thresholds (0.961) and recall (0.902). Notably, this performance matches or exceeds that of manual expert annotation (mAP: 0.805), particularly in challenging cases involving multiple fracture patterns or growth plate proximity. Analysis of the LLM-based extraction system showed 93\% schema compliance with a processing time of 2.3 seconds per report. Error analysis revealed challenges primarily in complex fracture patterns (15\% error rate) and ambiguous language interpretation (12\% error rate), suggesting areas for future improvement.
+
+Separately, we also tested our models on 4 clinical classification tasks. The anatomical region localization model <>, while the fracture pattern recognition model achieved <> performance in distinguishing Salter-Harris classifications/ buckle/torus patterns. The healing assessment model demonstrated <> accuracy in identifying acute cases requiring immediate intervention, and the alignment evaluation model showed excellent sensitivity for detecting poor alignment necessitating reduction. This specialized training approach matches or exceeds performance of manually annotated training across all four clinical dimensions, particularly in challenging cases involving multiple fracture patterns or growth plate proximity.
+
+
+
+\subsubsection{VLM Verification}
+We evaluated the accuracy of our VLM-based verification approach using the MedGemma-27B-it model on 294 images. In this setup, the VLM was prompted to review bounding boxes generated by YOLO and determine the bone type and anatomical region associated with each box. Ground truth labels were derived from radiology reports.
+
+The evaluation considered five bone categories (radius, ulna, scaphoid, metacarpal, and other) and eight anatomical region categories (distal, metaphysis, styloid, diaphysis, waist, shaft, proximal, and other). Images without fractures (25 cases) were excluded, leaving 269  images containing 417 fracture instances for analysis.
+
+Results showed that the VLM verification system demonstrated high accuracy for bone type classification, correctly identifying the bone in  97.4\% of fracture cases (Table \ref{tab:vlm_accuracy}). Accuracy for anatomical region classification was lower at 88.2\%. This drop in performance likely reflects the greater complexity and nuance required for region-level interpretation, which can be challenging for general-purpose VLMs.
+
+
+
+\subsubsection{LLM Verification}
+ The LLM-based structured data extraction system was tasked with extracting fracture information from radiology reports, which was then compared with YOLO-predicted bounding boxes in terms of the number of fractures per image.
+ To evaluate the reliability of our LLM-based structured data extraction system, we implemented two complementary approaches to estimate hallucination rates.
+
+We manually identified potential hallucinations when the LLM indicated a fracture but the corresponding radiology report explicitly stated otherwise, from 250 cases. We identified 5 potential hallucinations, corresponding to a hallucination rate of 0.98\%. Error analysis suggested that most hallucinations  occurred in cases with complex fracture patterns or ambiguous report phrasing.
+
+\begin{table}[]
+\begin{tabular}{|c|c|}
+\hline
+\textbf{VLM Evaluation Metric}   & \textbf{Accuracy} \\ \hline
+Bone Type Classification         & 97.4\%            \\ \hline
+Anatomical Region Classification & 88.2\%            \\ \hline
+\end{tabular}
+\centering
+\caption{Vision Language Model accuracy in verifying YOLO-detected bounding boxes against LLM-extracted fracture information. The VLM was evaluated on its ability to correctly identify bone types and anatomical regions within YOLO-predicted bounding boxes across 269 processed images containing 417 fracture cases.}
+\label{tab:vlm_accuracy}
+\end{table}
+
+\begin{comment}
+\begin{table}[]
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{LLM Evaluation Metric} & \textbf{Hallucination Rate} & \textbf{Cases Analyzed} \\ \hline
+Text-based Heuristics      & 0.98\%                      & 12,437                  \\ \hline
+Confidence Scoring         & 0.31\%                      & 9,515                   \\ \hline
+\end{tabular}
+\centering
+\caption{Hallucination rate analysis of the LLM-based structured information extraction system using two complementary validation methods. Results are based on 12,437 total findings across 8,040 unique cases, with 11,241 fracture detections and 1,196 no-fracture findings. Confidence scoring refers to LLM detections with uncertain language in the report based on 4 level  criteria. Text based heuristics are quantified contradictions between LLM detected fractures and report language. }
+\label{tab:hallucination_rates} 
+\end{table}
+\end{comment}
+
+\begin{comment}
+\begin{table}[]
+\begin{tabular}{|ll|}
+\hline
+\multicolumn{2}{|l|}{\textbf{Confidence Distribution}}              \\ \hline
+\multicolumn{1}{|l|}{High Confidence Detections}   & 9,481 (84.3\%) \\ \hline
+\multicolumn{1}{|l|}{Medium Confidence Detections} & 1,400 (12.4\%) \\ \hline
+\multicolumn{1}{|l|}{Low Confidence Detections}    & 34 (0.3\%)     \\ \hline
+\multicolumn{2}{|l|}{\textbf{Error Analysis}}                       \\ \hline
+\multicolumn{1}{|l|}{Potential Hallucinations}     & 120 (0.96\%)   \\ \hline
+\multicolumn{1}{|l|}{Potential Misses}             & 101 (0.81\%)   \\ \hline
+\multicolumn{1}{|l|}{Rare Combinations}            & 45 (0.40\%)    \\ \hline
+\end{tabular}
+\centering
+\caption{LLM-based structured extraction system performance, showing distribution of confidence levels and errors across the test set.}
+\label{tab:llm_performance_stats}
+\end{table}
+\end{comment}
+
+
+
+\begin{figure}[!ht]
+\floatconts
+  {fig:fig3}
+  {\caption{Comparison of YOLO trained methods against radiologist marked ground truth on variety of clinically relevant cases from different fracture regions \& patterns, image views and conditions (e.g. cast). Pseudo-blind finetune (Ours) performs best with the large training dataset and is either better (rows 1\&2) or on par (row 3) with Manual Finetune. In Row 4, neither model succeeds entirely - Pseudo-Blind Finetunes correctly predict two distal fractures, while the Manually Finetuned model and the Graz Pretrained model correctly identify the styloid and distal radius. }}
+  {\includegraphics[width=0.7\linewidth]{ims/fig3.png}}
+\end{figure}
+
+
+\begin{figure}[!ht]
+\floatconts
+  {fig:fig4}
+  {\caption{Comparison of model performance metrics across different training approaches. Combined Precision (top left) and Recall curves (top right) show confidence thresholds versus respective metrics. Precision-Recall curves (bottom left) and F1 scores (bottom right) demonstrate overall detection performance. The Pseudo-Blind Finetune with large dataset (L) achieves superior performance with mAP of 0.822 and maximum F1 score of 0.820, outperforming both the Graz Pretrained baseline (mAP: 0.789) and Manual Finetune approach (mAP: 0.805). Statistics panels show detailed performance metrics for each model variant, with Pseudo-Blind Finetune (L) demonstrating the highest confidence threshold (0.961) and competitive recall (0.902) compared to manual annotation. }}
+  {\includegraphics[width=1.\linewidth]{ims/fig4.png}}
+\end{figure}
+
+\section{Discussion and Conclusions}
+We demonstrated that LLM-powered information extraction from radiology reports can effectively enhance fracture detection models, achieving superior performance (mAP 0.822) compared to manual annotation approaches without requiring additional expert labeling. Our pseudo-blind finetuning method particularly excelled with pediatric cases where growth plates typically challenge traditional detection systems.
+
+While the approach showed promise, limitations emerged with complex fracture patterns (15\% error rate) and report language ambiguity (12\% error rate). The model exhibited reduced performance on cast-containing images due to radio-opacity interference with bone structure visualization. Despite balanced sampling implementation, class distribution skewness, particularly in rare fracture patterns (e.g., styloid fractures at 3.8\%), impacted model performance on underrepresented classes.
+
+Future development should focus on specialized augmentation for cast-present cases and advanced sampling techniques like dynamic hard negative mining to address class imbalance while preserving model stability. Additional areas for improvement include enhanced robustness to report variability. This study establishes the feasibility of using LLM-extracted knowledge to reduce annotation burden while maintaining high diagnostic accuracy in clinical settings.
+
+% We demonstrated that LLM-powered information extraction from radiology reports can effectively enhance fracture detection models, achieving superior performance (mAP 0.822) compared to manual annotation approaches without requiring additional expert labeling. Our pseudo-blind finetuning method particularly excelled with pediatric cases where growth plates typically challenge traditional detection systems. While the approach showed promise, limitations emerged with complex fracture patterns (15\% error rate) and report language ambiguity (12\% error rate). Future work should focus on improving robustness to report variability and extending the method to other anatomical regions. This study establishes the feasibility of using LLM-extracted knowledge to reduce annotation burden while maintaining high diagnostic accuracy in clinical settings.
+\clearpage 
+
+\bibliography{midl-samplebibliography}
+
+\end{document}
