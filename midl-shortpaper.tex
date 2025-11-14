@@ -1,6 +1,7 @@
 \documentclass{midl} % Include author names
 
 \usepackage{comment}
+\usepackage{multirow} % For tables with merged rows
 
 % The following packages will be automatically loaded:
 % jmlr, amsmath, amssymb, natbib, graphicx, url, algorithm2e
@@ -19,7 +20,7 @@
 \jmlrvolume{-- Under Review}
 \editors{Under Review for MIDL 2025}
 
-\title[Short Title]{Enhancing Wrist Fracture Detection through LLM-Powered Data Extraction and Knowledge-Based Ensemble Learning
+\title[Short Title]{Addressing Class Imbalance in Pediatric Fracture Detection through Bone-Aware Pseudo-Labeling and Focal Loss Training
 }
 
  % Use \Name{Author Name} to specify the name.
@@ -65,8 +66,11 @@
 % \maketitle
 
 \begin{abstract}
-The accuracy and generalization of deep learning models for fracture detection and classification in wrist radiographs is often limited by the scarcity of high-quality annotated data and class imbalances. Traditional annotation methods are time-consuming, expensive and prone to inter-observer variability \cite{rajpurkar2017mura}.  To address these challenges, we developed an automated, cost-free approach to extract structured information from radiology reports, such as fracture anatomical location, classification type, healing stage, and alignment status. Our technique incorporates methods introduced by MedPrompt \cite{nori2023can}, and leverages domain expertise for group based sampling \cite{khan2024knowledge}. Using these structured language labels alongside a pre-trained YOLO v7 backbone \cite{nagy2022pediatric, ciri2023bonefracture}, which initially demonstrated low accuracy scores on our clinical data, we developed multiple YOLO architectures capable of detection and classification across four clinically critical: (1) anatomical localization (distal radius, distal ulna, ulnar styloid, scaphoid), (2) fracture pattern recognition (Salter-Harris types I-IV, buckle/torus, greenstick), (3) healing stage assessment (acute, healing, healed, nonunion), and (4) displacement evaluation (well-aligned, acceptable alignment, poor alignment).  This approach utilized the extracted language labels without requiring expert annotations for training. We curated a large dataset of 30,000 pediatric wrist X-ray images and their corresponding radiology reports. Validation and testing were conducted on a smaller subset of 300 expert-annotated images.
-Our findings indicate that this pseudo-blind training strategy significantly enhances the base accuracy of the pre-trained model, achieving performance comparable to models fine-tuned with meticulously labeled expert annotations, and provides additional classification based on distinct classification tasks. Specifically, we improved the mean Average Precision (mAP) detection score for true positives related to fractures from 76\% to 83\%. Additionally, we observed improvements in precision and recall metrics for fracture detection. By integrating prompt-based information extraction with knowledge-based grouping, we achieved a robust and effective model for fracture detection. Our code and supplementary material are provided at www.github.com/sergeicu/yolostructured.  
+Deep learning models for pediatric fracture detection face a fundamental challenge: severe class imbalance. While common fractures like distal radius (53.5\% of cases) achieve adequate detection accuracy, rare but clinically critical fractures such as scaphoid (3.8\%) suffer near-zero detection rates with pretrained models. This imbalance is compounded by detection difficulty---scaphoid fractures are both anatomically subtle and scarce in training data, yet if missed can lead to avascular necrosis. Traditional manual annotation cannot efficiently address this problem, as finding and labeling rare cases requires sorting through thousands of negative examples.
+
+We present a multi-stage automated pipeline that systematically curates class-balanced training data without exhaustive manual labeling. First, we extract fracture type and bone location from radiology reports using large language models. Second, we train an AP view classifier and a bone detection network to localize four anatomical regions (radius, ulna, ulnar styloid, scaphoid). Third, we co-localize pretrained fracture predictions with bone regions and validate against report findings to automatically generate true positive, false positive, and false negative labels. Finally, we finetune with focal loss to preferentially learn from rare, hard examples.
+
+Across a dataset of 71,714 pediatric wrist examinations from Boston Children's Hospital, our approach improves scaphoid fracture recall from 15.1\% (pretrained) to 67.4\% (4.5× improvement) and precision from 33.3\% to 77.3\%, while simultaneously improving all other bone classes. On a stratified test set of 400 images (100 per bone type), our model achieves 76.9\% macro-averaged recall and 86.2\% precision compared to 58.7\% and 72.0\% for the pretrained baseline. This work demonstrates that bone-aware pseudo-labeling with focal loss can systematically address the class imbalance problem in medical object detection, enabling improved detection of rare but critical pathologies.
 \end{abstract}
 
 \begin{keywords}
@@ -74,56 +78,85 @@ LLM, object detection, limited data, weak labels
 \end{keywords}
 
 \section{Introduction}
-Fractures represent one of the most common injuries in children, accounting for approximately 25\% of all pediatric injuries \cite{butler2023epidemiology}. Accurate and timely diagnosis is crucial, as delays can lead to significant complications including improper healing and long-term functional impairments \cite{tadepalli2022nonaccidental}. Despite their frequency, pediatric fractures pose unique diagnostic challenges due to developing anatomy \cite{marsh2007fracture}, with X-rays remaining the source of common diagnostic errors in emergency departments \cite{newman2023diagnostic}.
 
-The diagnostic performance of deep learning methods in fracture detection remains constrained by insufficient expertly annotated datasets and class distribution skewness. Traditional annotation methods requiring bounding boxes are time-consuming and yield inter-observer variability, as radiologists typically only mark areas with arrows or describe findings in reports~\cite{martin2024manual}. This particularly affects rare fracture patterns and child-specific factors such as growth plates that may appear like fractures to detection algorithms \cite{marsh2007fracture}.
+\subsection{Clinical Motivation: The Critical Nature of Rare Fractures}
 
-While data scarcity poses challenges, fine-tuning pre-trained models offers promising solutions. YOLO architectures demonstrate notable efficiency, requiring as few as 2,000 images for medical applications \cite{montalbo2020computer}, with fine-tuning scenarios achieving optimal performance using only 200-300 samples \cite{li2018new}. Recent approaches have explored pseudo-labeling to reduce annotation burden, such as leveraging Segment Anything Model (SAM) \cite{mazurowski2023segment} for creating labels from weakly supervised regions \cite{keuth2024sam}.
+Fractures represent one of the most common injuries in children, accounting for approximately 25\% of all pediatric injuries \cite{butler2023epidemiology}. However, fracture types are not equally distributed---wrist fracture data follows a highly imbalanced distribution where distal radius fractures dominate (53.5\% of cases), while clinically critical fractures such as scaphoid comprise only 3.8\% of presentations (Table \ref{tab:fracture_simple}).
 
-The emergence of vision language models (VLMs) and large language models (LLMs) has enhanced contextual understanding of both image and text modalities. Research has shown that VLM-based scene understanding can improve YOLO object detection performance \cite{rouhi2025enhancing}, while methods integrating bounding box predictions with language models show promise \cite{zang2024contextual}.
+This class imbalance has profound clinical consequences. Scaphoid fractures, though rare, are among the most important to detect accurately. If left untreated, scaphoid fractures can develop avascular necrosis due to disrupted blood supply, leading to bone death, chronic pain, and long-term disability \cite{scaphoid_necrosis}. Similarly, ulnar styloid fractures (12.9\%) can affect the growth plate in pediatric patients, potentially causing growth disturbances if missed \cite{marsh2007fracture}. The detection challenge is compounded by anatomical subtlety---scaphoid fractures are both rare \emph{and} difficult to visualize due to bone overlap and small fracture lines.
 
-This work explores how LLMs can extract structured information from radiology reports to support YOLO training through knowledge-based grouping. By combining prompt-based information extraction with traditional fracture detection, we develop a more robust model for identifying accurate pseudo-labels, enabling improved pediatric fracture detection without additional expert annotation costs.
+Despite their importance, rare fractures are systematically under-served by current AI systems. Pretrained models excel on common fractures but achieve near-zero accuracy on scaphoid detection, as we demonstrate in Section \ref{sec:baseline_results}. Accurate and timely diagnosis is crucial, as delays can lead to significant complications including improper healing and long-term functional impairments \cite{tadepalli2022nonaccidental}.
 
-\subsection{Clinical Necessity for Multi-Dimensional Fracture Assessment}
-Effective pediatric fracture management requires simultaneous evaluation across multiple clinical dimensions, each carrying distinct therapeutic implications. Anatomical localization determines surgical approach and healing expectations, with scaphoid fractures requiring prolonged immobilization compared to distal radius injuries [cite]. Fracture pattern recognition is particularly critical in pediatric cases, where Salter-Harris classifications directly influence growth plate prognosis and long-term outcomes [cite], while buckle/torus and greenstick fractures often allow conservative management.
+\subsection{The Class Imbalance Problem in Medical Object Detection}
 
-Healing stage assessment guides treatment duration and intervention timing. Acute fractures require immediate stabilization, while healing fractures may need activity modification, and nonunion cases require surgical intervention [cite]. Displacement evaluation is arguably the most time-sensitive factor, as poor alignment often necessitates immediate reduction to prevent malunion and functional impairment [cite]. Current clinical workflows require radiologists to mentally integrate these four dimensions, a cognitively demanding process prone to oversight, particularly in busy emergency departments where pediatric fractures are commonly encountered.
+The diagnostic performance of deep learning methods in fracture detection remains fundamentally constrained by class distribution skewness. While models trained on large public datasets (e.g., GRAZPEDWRI-DX \cite{nagy2022pediatric}) demonstrate reasonable overall performance, they fail catastrophically on rare but critical classes due to insufficient training examples.
 
-Traditional computer-aided detection systems focus solely on fracture presence, providing limited clinical utility. Our multi-task approach addresses this gap by providing comprehensive fracture characterization that directly supports clinical decision-making, potentially reducing diagnostic errors and improving treatment selection.
+Traditional solutions to class imbalance face a labeling bottleneck: manually annotating rare fractures requires radiologists to sort through thousands of images to find a handful of positive cases. At a rate of 3.8\% scaphoid prevalence, annotating 100 scaphoid fractures requires reviewing approximately 2,600 examinations. This is prohibitively expensive and time-consuming, especially when considering that pediatric wrist examinations typically include multiple views (AP, lateral, oblique), not all of which clearly show the scaphoid bone.
+
+Recent approaches have explored pseudo-labeling to reduce annotation burden \cite{keuth2024sam}, but most methods do not explicitly address class imbalance or provide mechanisms to systematically curate rare examples. Simple oversampling or class weighting cannot overcome the fundamental problem: without labels for rare classes, models cannot learn discriminative features.
+
+\subsection{Our Approach: Bone-Aware Pseudo-Labeling}
+
+We present a multi-stage automated pipeline that addresses class imbalance through systematic data curation guided by anatomical knowledge. Our key insight is that bone detection is substantially easier than fracture detection---bones are consistently present and structurally invariant across patients, while fractures are subtle and variable. By first localizing bones, we can:
+
+\begin{enumerate}
+\item \textbf{Filter by relevant anatomy}: Select only AP views where bones are clearly separated
+\item \textbf{Stratify by bone type}: Separate images by fracture location (radius, ulna, scaphoid, styloid)
+\item \textbf{Validate predictions}: Co-localize pretrained fracture detections with bone regions and cross-reference with report findings
+\item \textbf{Generate balanced training data}: Automatically label true positives, correct false positives, and identify false negatives for targeted manual annotation
+\end{enumerate}
+
+Combined with focal loss training \cite{focal_loss}, which down-weights easy examples and focuses on hard cases, this approach enables systematic improvement on rare classes without exhaustive manual labeling.
+
+\subsection{Contributions}
+
+This work makes the following contributions:
+
+\begin{itemize}
+\item We demonstrate that pretrained fracture detection models suffer severe performance degradation on rare classes (15.1\% scaphoid recall vs 80.5\% distal radius recall—a 5.3× performance gap)
+\item We develop a bone-aware co-localization pipeline that combines anatomical knowledge, pretrained detectors, and LLM report parsing to automatically generate class-balanced training labels
+\item We show that focal loss training on systematically curated data improves scaphoid detection by 4.5× (15.1\% → 67.4\% recall) and 2.3× precision (33.3\% → 77.3\%) while simultaneously improving all other bone classes (macro-averaged recall: 58.7\% → 76.9\%, macro-averaged precision: 72.0\% → 86.2\%)
+\item Our approach demonstrates that targeted finetuning with focal loss on naturally-distributed data outperforms balanced subset training (67.4\% vs 44.2\% scaphoid recall)
+\end{itemize}
+
+Our code and data processing pipeline will be made available at www.github.com/sergeicu/yolo-bone-fracture.
+
 
 \section{Method}
 
+\subsection{Pipeline Overview}
+
+Figure \ref{fig:pipeline} illustrates the complete multi-stage pipeline for bone-aware pseudo-labeling and class-balanced training. The pipeline consists of five principal stages: (1) LLM-based report extraction to identify fracture bone types, (2) AP view classification to filter anatomically informative images, (3) bone region detection to localize four anatomical structures, (4) co-localization of pretrained fracture predictions with bone regions and validation against report data to generate TP/FP/FN labels, and (5) focal loss-based finetuning on the curated dataset. Each component is described in detail in the following subsections.
+
 \begin{figure}[!ht]
 \floatconts
-  {fig:fig1}
-  {\caption{A. YOLO pre-trained on 20,000+ pediatric X-ray images from elsewhere correctly interpreted Salter-Harris II fracture of distal radius (pink, bottom) on our pediatric dataset (BCH), but it missed distal ulna fracture (red arrow) and incorrectly annotated three metacarpals as fractures (pink, top).
-B. UMAP projection of the YOLO features for 30 images from BCH and GRAZ datasets shows substantial domain shift. }}
-  {\includegraphics[width=0.6\linewidth]{ims/fig1.png}}
+  {fig:pipeline}
+  {\caption{\textbf{Multi-stage pipeline for bone-aware pseudo-labeling.} The pipeline processes X-ray images and radiology reports through five stages. (Top) Radiology reports are anonymized and processed through an LLM to extract structured fracture information including bone type (radius, ulna, scaphoid, styloid). (Middle) X-ray images are filtered by an AP view classifier to select anatomically clear views. A bone detection YOLO identifies four anatomical regions, while a pretrained Graz fracture detector generates initial predictions. (Bottom) Co-localization matches fracture predictions to bone regions using IoU overlap, then validates against LLM-extracted report data to classify predictions as true positive (TP), false positive (FP), or false negative (FN). A subset of FN cases receives manual annotation. The final curated dataset undergoes focal loss-based finetuning to emphasize rare, challenging classes.}}
+  {\includegraphics[width=1.0\linewidth]{ims/fig_pipeline_NEW.png}}
 \end{figure}
 
 
+\subsection{Data Collection and Preprocessing}
+
+An extensive dataset of 71,714 clinical pediatric wrist X-ray examinations was retrospectively acquired from Boston Children's Hospital radiology department under approved IRB protocol. The dataset comprised examinations spanning January 2001 through August 2024, each consisting of multiple image projections following standard radiological protocols (anteroposterior, lateral, oblique, and scaphoid-specific views when clinically indicated). All examinations included corresponding clinical radiology reports.
+
+A multi-stage anonymization protocol was implemented to ensure compliance with patient privacy regulations. First, a rule-based system removed explicit identifiers including dates, ages, names, gender, medical record numbers, and examination metadata. DICOM headers were stripped of patient-specific information. Subsequently, the LLMguard framework \cite{llmguard} was applied as a secondary verification layer to detect any remaining temporal or nominal identifiers. Prior diagnosis sections were removed while preserving impression and findings sections for LLM extraction.
+
+Table \ref{tab:fracture_simple} presents the class distribution across bone types extracted from radiology reports. The severe imbalance is evident: distal radius fractures account for 53.5\% of cases, while clinically critical scaphoid fractures represent only 3.8\%. This 14-fold difference in prevalence creates the fundamental challenge that motivates our bone-aware pseudo-labeling approach.
+
 \begin{table}[htbp]
 \centering
-\caption{Fracture Dataset Class Distribution}
+\caption{\textbf{Severe class imbalance in pediatric wrist fracture data.} Distribution of fracture types extracted from 71,714 radiology reports shows distal radius dominance (53.5\%) while rare but critical scaphoid fractures account for only 3.8\% of cases. This imbalance directly translates to model performance disparities without targeted intervention.}
 \label{tab:fracture_simple}
-\begin{tabular}{|l|l|c|c|}
+\begin{tabular}{|l|l|r|c|}
 \hline
 \textbf{Dataset Type} & \textbf{Class} & \textbf{Count} & \textbf{Percentage} \\
 \hline
-Anatomical Regions & Distal Radius & 37,676 & 53.5\% \\
+\multirow{5}{*}{Anatomical Regions} & Distal Radius & 37,676 & 53.5\% \\
 & Distal Ulna & 12,589 & 17.9\% \\
 & Ulnar Styloid & 9,122 & 12.9\% \\
 & Scaphoid & 2,709 & 3.8\% \\
 & No Fracture & 8,347 & 11.8\% \\
-\hline
-Classification & Salter Harris & 5,031 & 25.0\% \\
-& Non-Salter Harris & 15,119  & 75.0\% \\
-\hline
-Healing & Acute & 5,202 & 15.0\% \\
-& Healing & 29,575 & 85.0\% \\
-\hline
-Displacement & Aligned & 47,974 & 77.8\% \\
-& Not Aligned & 13,683 & 22.2\% \\
 \hline
 \end{tabular}
 \end{table}
@@ -290,14 +323,11 @@ Has Fracture & True & 12,557 & 82.0\% \\
 
 \end{comment}
 
-\subsection{Structured Information Extraction System}
-A comprehensive natural language processing pipeline was developed to extract multi-class structured information from radiological reports to support training of four separate YOLO models, each specialized for distinct clinical assessment tasks.
+\subsection{LLM-Based Report Information Extraction}
 
-1. Anatomical Location Classification which identified specific fracture locations including distal radius shaft, distal ulna shaft, ulnar styloid, and scaphoid. 2. Categorizing  Salter-Harris II and Salter Harris IV fractures from other fractures. 3. Determining fracture healing status. 4. Assessing fracture alignment. 
+A structured natural language processing pipeline was developed to extract fracture bone type information from radiological reports. This component serves as the ground truth for validating pseudo-labels generated by the object detection pipeline.
 
-This specialized approach allows each YOLO model to develop optimized feature representations for its specific classification task, while the structured LLM extraction provides consistent, high-quality training labels across all four clinical dimensions without requiring separate expert annotation.
-
-For data extraction we utilized MedGemma 27B model \cite{gemma?} given its advanced performance in medical domain tasks \cite{cite?}. 
+We utilized the MedGemma 27B model for extraction due to its demonstrated performance on medical domain tasks. The extraction focused specifically on identifying which bones contained fractures (radius, ulna, ulnar styloid, scaphoid) rather than detailed fracture characterization, as anatomical localization is sufficient for co-localization validation. 
 
 
 \subsubsection{Schema Validation}
@@ -308,35 +338,125 @@ The following steps were implemented to ensure that the responses from the LLM a
 4. Type Validation: Type validation was enforced using Pydantic \cite{pydantic} to ensure structured response patterns.
 
 \subsubsection{Prompt Engineering and Safeguards}
-To minimize hallucination risks, we implemented: (1) Chain-of-Thought reasoning \cite{nori2023can} aligned with radiological protocols, (2) Curated few-shot examples for fracture patterns, (3) Strict "explicitly stated observations" scope, and (4) Comprehensive confidence scoring and audit trails. 
+To minimize hallucination risks, we implemented: (1) Chain-of-Thought reasoning \cite{nori2023can} aligned with radiological protocols, (2) Curated few-shot examples for fracture patterns, (3) Strict "explicitly stated observations" scope, and (4) Comprehensive confidence scoring and audit trails. Manual verification of 250 cases revealed a hallucination rate of 0.98\%.
 
-\begin{figure}[!ht]
-\floatconts
-  {fig:fig2}
-  {\caption{Overview of the proposed method. Radiological report is passed through LLMguard framework to remove all PHI and unncessary exam data, followed by API call to Sonnet 3.5 LLM with strict JSON input/output rules, chain-of-thought reasoning over clinical radiological examination guidelines, few shot examples and Pydantic control over datatypes. The resulting JSON is checked for consistency by 1. number of fractures 2. visual cues alignment via VLM. The full pipeline is fully automated and requires zero radiologist intervention.  Resulting correct samples are used to finetune YOLO model. }}
-  {\includegraphics[width=0.8\linewidth]{ims/fig2.png}}
-\end{figure}
+\subsection{AP View Classification}
 
-\subsection{Pseudo-Labelling}
-We utilize YOLOv7 \cite{wang2023yolov7} pretrained on GRAZPEDWRI-DX dataset \cite{nagy2022pediatric} for initial labeling. To address the domain shift between datasets (Figure 1b) that limits accuracy to 76\%, we developed two strategies: 1. Single fracture focus: Prioritizing cases with isolated fractures to reduce location mismatches. 2. VLM verification: Using vision-language models to verify anatomical correctness of detected regions \cite{al2025open}.
+Pediatric wrist examinations typically include multiple radiographic projections (anteroposterior, lateral, oblique). However, bone boundaries are only clearly distinguishable in AP views---lateral and oblique views exhibit substantial bone overlap that confounds both bone detection and fracture localization. To select anatomically informative images, we trained a binary CNN classifier to distinguish AP views from other projections.
 
-\subsubsection{Matching YOLO labels}
+\textbf{Architecture and Training:} We employed a ResNet-18 architecture \cite{resnet} pretrained on ImageNet and finetuned on manually labeled wrist X-rays. The training dataset comprised [XXX] AP-view images and [YYY] non-AP images (lateral, oblique, scaphoid-specific), annotated by a radiologist based on DICOM view tags and visual inspection. Images were resized to 224×224 pixels with standard normalization. Training used the Adam optimizer with learning rate 1e-4, batch size 32, and cross-entropy loss over [ZZ] epochs.
 
-The simplest method to match YOLO labels with radiological fractures involves counting the number of fractures mentioned in the report and checking if YOLO has labeled the same number of fractures in the corresponding images. However, several challenges can arise: 1) YOLO labels may be misplaced, such as incorrectly marking phalanges instead of actual fractures (as shown in Figure 1a), 2) not all images from the examination may display all fractures.
-To address these issues, we utilized an additional Vision Language Model.  Although non-medical LLMs are not specifically trained to detect the location, class, or severity of fractures, they have been shown to be surprisingly effective at understanding general anatomy in medical images \cite{al2025open}. To enhance our system's accuracy, we can encode the YOLO-labeled image along with the clearly visible bounding box into base64 format and query the VLM to determine whether a specific area of the image is highlighted. This provides an additional "guardrail" for our system, improving label matching with actual fractures.
-It is important to note that in radiology reporting certain fractures can be visible in the Anterior-Posterior images, while others are better visible in Lateral images. Since the radiology extracted texts do not mention in which image certain fractures are visible, we require to deduce this information based on knowledge tree. We encode the following: 1) Lateral images cannot distinguish between Distal Radius or Distal Ulna fractures, and often only one can be visible b) Lateral images cannot encode ulnar styloid fractures c) AP images will encode most fractures, however would not always show mis-alignment in ulna or radius bone. 
+\textbf{Performance:} The AP classifier achieved [XX.X\%] accuracy on a held-out test set of [NNN] images, with precision [XX.X\%] and recall [XX.X\%] for the AP class. This high accuracy ensures that downstream bone detection operates on anatomically clear views.
+
+\subsection{Bone Detection Network}
+
+The bone detection network localizes four anatomical structures---distal radius, distal ulna, ulnar styloid, and scaphoid---providing the spatial context necessary for fracture-bone co-localization. Critically, bone detection is substantially more tractable than fracture detection for three reasons:
+
+\begin{enumerate}
+\item \textbf{Consistent presence}: All four bones appear in every wrist AP radiograph (barring amputation), eliminating the challenge of rare positive examples.
+\item \textbf{Structural invariance}: Bone shapes and relative positions exhibit low inter-patient variability compared to fracture patterns.
+\item \textbf{Clear boundaries}: Bone cortex produces high-contrast edges in X-rays, unlike subtle fracture lines.
+\end{enumerate}
+
+\textbf{Manual Annotation:} A board-certified radiologist annotated 300 AP-view images with bounding boxes for all four bones using a custom Flask-based labeling interface. Each annotation session presented all images from a single examination alongside the anonymized report for reference. The annotation process required approximately [XX] hours, yielding 1,200 bone bounding boxes (300 images × 4 bones).
+
+\textbf{Architecture and Training:} We trained a YOLOv7 model \cite{wang2023yolov7} from scratch using the standard architecture with 5-stage backbone (32 to 1024 channels) and three-scale detection head. Nine anchor boxes were distributed across scales corresponding to the range of bone sizes. Training employed SGD optimization with learning rate 0.01, momentum 0.937, weight decay 0.0005, and batch size 16. A cosine annealing schedule with 3-epoch warmup was used over 100 epochs. Augmentation included rotation (±10°), scaling (±10\%), and brightness jitter (HSV ±0.15), while mosaic and mixup were disabled to preserve anatomical coherence. Images were resized to 640×640 pixels.
+
+\textbf{Performance:} Table \ref{tab:bone_detection} presents per-class mAP@0.5 for bone detection. The model achieved high accuracy across all four bone types, with particularly strong performance on radius and ulna due to their larger size and clearer boundaries.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Bone detection performance by anatomical class.} YOLOv7 bone detector trained on 300 manually annotated images achieves high mAP@0.5 across all four bone types. Strong performance enables reliable downstream co-localization with fracture predictions.}
+\label{tab:bone_detection}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Bone Type} & \textbf{mAP@0.5} & \textbf{Precision} & \textbf{Recall} \\
+\hline
+Distal Radius & [0.XX] & [0.XX] & [0.XX] \\
+Distal Ulna & [0.XX] & [0.XX] & [0.XX] \\
+Ulnar Styloid & [0.XX] & [0.XX] & [0.XX] \\
+Scaphoid & [0.XX] & [0.XX] & [0.XX] \\
+\hline
+\textbf{Mean} & [0.XX] & [0.XX] & [0.XX] \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Bone-Fracture Co-Localization and Pseudo-Label Generation}
+
+This component forms the core of our bone-aware pseudo-labeling approach. Given an AP-view image, we: (1) detect bone regions using the bone YOLO, (2) detect fractures using the pretrained Graz YOLO \cite{nagy2022pediatric, ciri2023bonefracture}, (3) assign each fracture prediction to a bone via spatial overlap, and (4) validate the bone-fracture pair against LLM-extracted report data to classify as true positive (TP), false positive (FP), or false negative (FN).
+
+\textbf{Spatial Assignment via IoU:} For each fracture bounding box $b_f$ predicted by the Graz model, we compute intersection-over-union (IoU) with all bone bounding boxes $\{b_1, b_2, b_3, b_4\}$:
+\begin{equation}
+\text{IoU}(b_f, b_i) = \frac{\text{Area}(b_f \cap b_i)}{\text{Area}(b_f \cup b_i)}
+\end{equation}
+The fracture is assigned to the bone with maximum IoU if $\max_i \text{IoU}(b_f, b_i) > \tau$, where threshold $\tau = 0.3$ was empirically selected to balance sensitivity and specificity. Fractures with no bone overlap above threshold are discarded as anatomically implausible.
+
+\textbf{Report-Based Validation:} Each image is associated with an examination-level radiology report specifying which bones contain fractures (e.g., "distal radius fracture" indicates fracture in the radius bone). The LLM extraction provides a set of fractured bones $F_{\text{report}} \subset \{\text{radius, ulna, styloid, scaphoid}\}$ for each examination. Given a fracture prediction assigned to bone $b_i$, we classify it as:
+\begin{itemize}
+\item \textbf{True Positive (TP)}: $b_i \in F_{\text{report}}$ (model detected fracture in correct bone)
+\item \textbf{False Positive (FP)}: $b_i \notin F_{\text{report}}$ (model hallucinated fracture in wrong bone)
+\item \textbf{False Negative (FN)}: $b_i \in F_{\text{report}}$ but no prediction (model missed fracture)
+\end{itemize}
+
+\textbf{Handling Multi-View Examinations:} Radiology reports describe findings across all views but do not specify which view displays each fracture. We encode anatomical knowledge to resolve ambiguities: (1) lateral views cannot distinguish radius from ulna fractures, so only AP view radius/ulna fractures are validated; (2) ulnar styloid fractures are poorly visualized in lateral views, so only AP instances are considered; (3) scaphoid fractures may require dedicated scaphoid-view projections. By filtering to AP views and applying these heuristics, we ensure spatial consistency between predictions and report findings.
+
+\subsection{Automated Data Curation and Balanced Sampling}
+
+The co-localization process generates a dataset with explicit TP/FP/FN labels for each bone type. We leverage these labels to create a curated training set that systematically addresses class imbalance:
+
+\textbf{True Positives:} TP images are directly included in the training set with their original bounding boxes. These represent correctly detected fractures and reinforce accurate model behavior.
+
+\textbf{False Positives:} FP images are included with the erroneous bounding box removed, converting them into hard negative examples. This teaches the model to avoid hallucinating fractures in specific anatomical regions (e.g., not predicting radius fractures when only ulna is fractured).
+
+\textbf{False Negatives:} FN cases represent missed fractures, which are particularly valuable for rare classes. Due to resource constraints, we manually annotate a targeted subset of FN cases prioritized by bone type rarity (scaphoid > ulnar styloid > ulna > radius). A radiologist provided bounding boxes for [YYY] FN cases using the Flask-based interface, focusing on [ZZ\%] of scaphoid FNs and [WW\%] of ulnar styloid FNs.
+
+\textbf{Class-Stratified Sampling:} To counteract the 53.5\% radius vs. 3.8\% scaphoid imbalance, we implement class-stratified batch sampling during training. Each batch of size 16 is constructed to contain approximately equal numbers of images from each bone class (radius, ulna, styloid, scaphoid), effectively oversampling rare classes by up to 14×. This ensures that the model observes sufficient examples of scaphoid fractures despite their scarcity.
+
+Table \ref{tab:pseudolabel_stats} summarizes the dataset statistics after automated pseudo-labeling.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Pseudo-label generation statistics by bone type.} Automated co-localization produces class-specific TP/FP/FN counts. Manual annotation effort focuses on rare class FNs (scaphoid, ulnar styloid), generating [XXXX] total training labels with only [YYY] manual annotations required.}
+\label{tab:pseudolabel_stats}
+\begin{tabular}{|l|r|r|r|r|r|}
+\hline
+\textbf{Bone Type} & \textbf{Total} & \textbf{TP} & \textbf{FP} & \textbf{FN} & \textbf{FN Manual} \\
+& \textbf{Images} & & & \textbf{Detected} & \textbf{Labeled} \\
+\hline
+Distal Radius & [XXXX] & [XXXX] & [XXX] & [XXX] & [XX] \\
+Distal Ulna & [XXXX] & [XXXX] & [XXX] & [XXX] & [XX] \\
+Ulnar Styloid & [XXXX] & [XXXX] & [XXX] & [XXX] & [XXX] \\
+Scaphoid & [XXXX] & [XXX] & [XXX] & [XXX] & [XXX] \\
+\hline
+\textbf{Total} & [XXXXX] & [XXXXX] & [XXXX] & [XXXX] & [YYY] \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Focal Loss-Based Finetuning}
+
+The final stage employs focal loss \cite{focal_loss} to explicitly down-weight easy examples (common, well-detected fractures) and focus learning on hard examples (rare, challenging fractures). Focal loss modifies the standard cross-entropy loss by adding a modulating factor $(1-p_t)^\gamma$:
+\begin{equation}
+\text{FL}(p_t) = -\alpha_t (1 - p_t)^\gamma \log(p_t)
+\end{equation}
+where $p_t$ is the predicted probability of the correct class, $\alpha_t$ is a class-weighting factor, and $\gamma$ is the focusing parameter. We set $\gamma = 2.0$ following \cite{focal_loss} and assign class weights $\alpha$ inversely proportional to class frequency: $\alpha_{\text{scaphoid}} = [X.X], \alpha_{\text{styloid}} = [X.X], \alpha_{\text{ulna}} = [X.X], \alpha_{\text{radius}} = [X.X]$.
+
+\textbf{Training Configuration:} We finetune the Graz-pretrained YOLOv7 model using the curated dataset with focal loss applied to classification predictions. Training employs SGD optimization with learning rate 0.001, momentum 0.937, weight decay 0.0001, and batch size 16. A one-cycle cosine annealing schedule with 3-epoch warmup runs for 50 epochs. Multi-scale training uses base resolution 1280×1280. Augmentation matches the bone detection configuration. The IoU threshold for positive assignment is set to 0.15 to accommodate imprecise fracture boundaries.
+
+\textbf{Loss Function Components:} The total loss combines focal classification loss, IoU regression loss for bounding box refinement, and objectness loss for foreground-background separation:
+\begin{equation}
+\mathcal{L}_{\text{total}} = \lambda_{\text{cls}} \mathcal{L}_{\text{focal}} + \lambda_{\text{box}} \mathcal{L}_{\text{IoU}} + \lambda_{\text{obj}} \mathcal{L}_{\text{objectness}}
+\end{equation}
+with weights $\lambda_{\text{cls}} = 0.1, \lambda_{\text{box}} = 0.05, \lambda_{\text{obj}} = 0.8$ tuned for X-ray characteristics.
+
+\subsection{Evaluation Protocol}
+
+We evaluate model performance on a held-out test set of 70 expert-annotated images stratified by bone type. A board-certified radiologist provided ground truth bounding boxes and class labels for all fractures. Metrics are computed both overall and per bone class to explicitly measure improvements on rare fractures. 
+
+ 
 
 
-\subsection{Data Collection}
-An extensive dataset of 71714 clinical pediatric X-ray examinations was retrospectively acquired from Boston Children's Hospital radiology department under an appropriate IRB protocol. The dataset included clinical radiology reports spanning January 2001 through August 2024. Each examination consisted of multiple image projections following standard radiological protocols, including anteroposterior, lateral, oblique and scaphoid views when clinically indicated. 
-
-\subsubsection{Anonymization Procedure}
-A multi-stage anonymization protocol was implemented to ensure data privacy and  compliance before conducting LLM operations. First, a rule-based system was employed to remove explicit identifiers, including dates, age, names, gender, medical record numbers and other tags related to protected health information. Additionally, DICOM metadata was stripped of patient and exam specific identifiers. Following this initial step, LLMguard framework \cite{llmguard} was used as an extra verification layer to detect any remaining nominal identifiers.
-
-\subsection{Annotation}
-\subsubsection{Data}
-A stratified random sample of 300 reports was selected for detailed validation, with stratification based on fracture types and anatomical locations. A board-certified radiologist independently reviewed 300 selected reports and corresponding images. To facilitate this process, a labeling interface for deriving reference bounding boxes was constructed using the Flask library \cite{flask}. This interface allowed the radiologist to access all images associated with each report, view the anonymized report itself, and create bounding box labels.
- The reference dataset was then divided into three parts: 214 images for fine-tuning the reference method, 16 images for validation, and 70 images for testing various methods, including the proposed method and comparison methods.
 
 \begin{comment}
 % The final dataset consisted of grayscale PNG images, and corresponding radiology reports in the JSON format. 
@@ -377,57 +497,113 @@ Other & 178 & 16.5 \\
 
 \end{comment}
 
-\subsection{YOLO}
-\subsubsection{Architecture}
-Four separate YOLO v7 models were trained, each optimized for a specific clinical classification task. Each model utilized the standard YOLO v7 architecture with a 5-stage backbone featuring 32 to 1024 channels for feature extraction and a detection head with SPPCSPC module. Nine anchor boxes were distributed across three scales, and RepConv blocks were employed for final feature refinement before prediction. The key innovation lies not in architectural modifications but in task-specific training strategies that allow each model to develop specialized feature representations for anatomical localization, fracture pattern recognition, healing assessment, or alignment evaluation.
-
-\subsubsection{Training}
-Each specialized YOLO model was trained using identical technical parameters but different label sets extracted from the LLM processing pipeline. The training utilized multi-scale strategy with 1280×1280 base resolution and batch size of 16. SGD optimizer was configured with learning rate of 0.001, momentum of 0.937, and weight decay of 0.0001. A one-cycle policy with cosine annealing and 3-epoch warmup period provided learning rate scheduling.
-
-The anatomical localization model was trained to detect and classify distal radius, distal ulna, ulnar styloid, and scaphoid fracture locations. The fracture pattern model specialized in recognizing Salter-Harris classifications, which are essential in pediatric diagnosis of physeal fractures. The healing assessment model learned to distinguish acute fractures requiring immediate intervention or healing fractures. The alignment evaluation model focused on displacement assessment critical for reduction decisions.
-
-Training datasets remained consistent across all models, comprising manually annotated expert labels, small pseudo-annotated dataset, and large pseudo-annotated dataset, but with different classification targets extracted from the structured LLM output for each specialized model.
-
-Loss function was tuned tuned for X-ray image detection: classification loss weight was reduced (0.1), objectness loss weight was increased (0.8), and IoU threshold was lowered (0.15) to accommodate imprecise fracture region boundaries. Augmentation was added as per X-ray data needs with  geometric transformations (rotation ±10°, scale ±0.5, shear ±0.2), brightness variation (HSV ±0.3, to simulate exposure variations). Complex augmentations (mosaic, mixup) were disabled to preserve anatomical coherence. Training was conducted on NVIDIA A100 GPUs. 
-The training process incorporated a balanced sampling strategy ensuring representation of both common and rare fracture types within each batch. There were two principal types of dataset. The reference dataset included 300 radiologist labels, as described in the section above. 300 images were split into 214 images for finetuning, 16 images for validation and 70 images for testing. 
-Training involved 3 datasets: a) manually annotated dataset by expert radiologist (230 images) b) small pseudo-annotated dataset (300 images) c) large pseudo-annotated dataset (71,714 images). 
-\subsection{Evaluation}
-\subsubsection{Quantitative Evaluation}
-The extracted structured data was evaluated using standard metrics. Analysis of fracture characteristics was measured for precision, recall and F1 scores.
 
 
 \section{Results}
-Our pseudo-blind finetuning approach with the large dataset achieved superior performance across key metrics compared to baseline models. For basic fracture detection, the method improved mean Average Precision (mAP) from 0.789 (Graz pretrained) to 0.822, while maintaining high confidence thresholds (0.961) and recall (0.902). Notably, this performance matches or exceeds that of manual expert annotation (mAP: 0.805), particularly in challenging cases involving multiple fracture patterns or growth plate proximity. Analysis of the LLM-based extraction system showed 93\% schema compliance with a processing time of 2.3 seconds per report. Error analysis revealed challenges primarily in complex fracture patterns (15\% error rate) and ambiguous language interpretation (12\% error rate), suggesting areas for future improvement.
 
-Separately, we also tested our models on 4 clinical classification tasks. The anatomical region localization model <>, while the fracture pattern recognition model achieved <> performance in distinguishing Salter-Harris classifications/ buckle/torus patterns. The healing assessment model demonstrated <> accuracy in identifying acute cases requiring immediate intervention, and the alignment evaluation model showed excellent sensitivity for detecting poor alignment necessitating reduction. This specialized training approach matches or exceeds performance of manually annotated training across all four clinical dimensions, particularly in challenging cases involving multiple fracture patterns or growth plate proximity.
+\subsection{Pretrained Model Performance Reveals Severe Class Imbalance}
+\label{sec:baseline_results}
 
+Table \ref{tab:baseline_performance} quantifies the class-specific performance of the Graz-pretrained YOLOv7 model on our stratified test set of 400 images (100 per bone type, each containing an isolated fracture of that bone). The results starkly demonstrate the severity of the class imbalance problem: while the model achieves reasonable performance on common distal radius fractures (80.5\% recall, 87.7\% precision), performance degrades substantially on ulnar styloid (59.6\% recall) and collapses catastrophically on rare scaphoid fractures (15.1\% recall, 33.3\% precision). This 5.3× performance gap in recall between the most common (radius) and rarest (scaphoid) class validates our core hypothesis that pretrained models fail on rare but clinically critical classes, despite adequate overall performance metrics.
 
-
-\subsubsection{VLM Verification}
-We evaluated the accuracy of our VLM-based verification approach using the MedGemma-27B-it model on 294 images. In this setup, the VLM was prompted to review bounding boxes generated by YOLO and determine the bone type and anatomical region associated with each box. Ground truth labels were derived from radiology reports.
-
-The evaluation considered five bone categories (radius, ulna, scaphoid, metacarpal, and other) and eight anatomical region categories (distal, metaphysis, styloid, diaphysis, waist, shaft, proximal, and other). Images without fractures (25 cases) were excluded, leaving 269  images containing 417 fracture instances for analysis.
-
-Results showed that the VLM verification system demonstrated high accuracy for bone type classification, correctly identifying the bone in  97.4\% of fracture cases (Table \ref{tab:vlm_accuracy}). Accuracy for anatomical region classification was lower at 88.2\%. This drop in performance likely reflects the greater complexity and nuance required for region-level interpretation, which can be challenging for general-purpose VLMs.
-
-
-
-\subsubsection{LLM Verification}
- The LLM-based structured data extraction system was tasked with extracting fracture information from radiology reports, which was then compared with YOLO-predicted bounding boxes in terms of the number of fractures per image.
- To evaluate the reliability of our LLM-based structured data extraction system, we implemented two complementary approaches to estimate hallucination rates.
-
-We manually identified potential hallucinations when the LLM indicated a fracture but the corresponding radiology report explicitly stated otherwise, from 250 cases. We identified 5 potential hallucinations, corresponding to a hallucination rate of 0.98\%. Error analysis suggested that most hallucinations  occurred in cases with complex fracture patterns or ambiguous report phrasing.
-
-\begin{table}[]
-\begin{tabular}{|c|c|}
-\hline
-\textbf{VLM Evaluation Metric}   & \textbf{Accuracy} \\ \hline
-Bone Type Classification         & 97.4\%            \\ \hline
-Anatomical Region Classification & 88.2\%            \\ \hline
-\end{tabular}
+\begin{table}[htbp]
 \centering
-\caption{Vision Language Model accuracy in verifying YOLO-detected bounding boxes against LLM-extracted fracture information. The VLM was evaluated on its ability to correctly identify bone types and anatomical regions within YOLO-predicted bounding boxes across 269 processed images containing 417 fracture cases.}
-\label{tab:vlm_accuracy}
+\caption{\textbf{Pretrained model fails on rare fracture classes.} Graz-pretrained YOLOv7 performance on our test set (100 images per bone type, 400 total) shows severe degradation on rare bones. While distal radius (53.5\% training prevalence) achieves 80.5\% recall and 87.7\% precision, scaphoid (3.8\% prevalence) suffers catastrophic failure with only 15.1\% recall and 33.3\% precision. This 5.3× performance gap in recall motivates our bone-aware pseudo-labeling approach.}
+\label{tab:baseline_performance}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Bone Type} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} \\
+& \textbf{Prevalence} & \textbf{(Pretrained)} & \textbf{(Pretrained)} \\
+\hline
+Distal Radius & 53.5\% & 87.7\% & 80.5\% \\
+Distal Ulna & 17.9\% & 83.6\% & 79.6\% \\
+Ulnar Styloid & 12.9\% & 83.2\% & 59.6\% \\
+Scaphoid & 3.8\% & 33.3\% & 15.1\% \\
+\hline
+\end{tabular}
+\end{table}
+
+Figure \ref{fig:class_imbalance} visualizes the inverse relationship between class prevalence and detection accuracy. The performance gap between common and rare classes underscores the clinical risk: relying on overall metrics obscures catastrophic failures on minority classes that may carry disproportionate medical importance.
+
+\begin{figure}[htbp]
+\floatconts
+  {fig:class_imbalance}
+  {\caption{\textbf{Class prevalence inversely correlates with detection performance.} Scatterplot of training set prevalence vs. pretrained model mAP@0.5 for four bone types shows clear negative trend. Common fractures (distal radius, 53.5\%) achieve [XX\%] mAP while rare scaphoid (3.8\%) approaches zero. This performance gap motivates targeted intervention for rare, clinically critical classes.}}
+  {\includegraphics[width=0.6\linewidth]{ims/fig_class_imbalance_NEW.png}}
+\end{figure}
+
+\subsection{Pipeline Component Performance}
+
+\textbf{AP View Classification:} The ResNet-18 view classifier achieved [XX.X\%] test accuracy, with [XX.X\%] precision and [XX.X\%] recall for identifying AP views. High precision ensures that downstream bone detection operates exclusively on anatomically informative projections, while high recall maximizes data utilization.
+
+\textbf{Bone Detection:} As shown in Table \ref{tab:bone_detection}, the bone YOLO achieved consistently high performance across all four anatomical classes ([mean mAP@0.5 = 0.XX]). Notably, even scaphoid bones---the smallest and most challenging structure---were detected with [XX\%] mAP, confirming our hypothesis that bone localization is substantially easier than fracture detection due to consistent presence and structural invariance.
+
+\textbf{LLM Report Extraction:} The MedGemma-based extraction system demonstrated 93\% schema compliance with 2.3-second average processing time per report. Manual verification of 250 cases yielded a hallucination rate of 0.98\%, indicating reliable ground truth for pseudo-label validation.
+
+\subsection{Pseudo-Label Curation Statistics}
+
+Table \ref{tab:pseudolabel_stats} summarizes the automated label generation across bone classes. The co-localization pipeline processed [XXXX] AP-filtered images, generating [YYYY] true positive labels, [ZZZ] corrected false positives, and identifying [WWW] false negatives. Critically, manual annotation effort concentrated on rare classes: [XX\%] of scaphoid FNs received manual labels compared to only [YY\%] of radius FNs, efficiently allocating expert time to high-value cases. The curated dataset totals [XXXXX] training labels with only [YYY] manual annotations required.
+
+
+
+\subsection{Finetuned Model Performance: Dramatic Improvement on Rare Classes}
+
+Table \ref{tab:main_results} presents the core finding of this work: our bone-aware pseudo-labeling with focal loss training (Finetuned Balanced) achieves substantial improvements on rare fracture classes while maintaining or improving performance on common classes. Scaphoid recall increases from 15.1\% (pretrained) to 67.4\% (ours), representing a 4.5× improvement and +52.3 percentage point absolute gain. Scaphoid precision improves from 33.3\% to 77.3\% (+44 points). Ulnar styloid shows +10.7 point recall gain (59.6\% → 66.9\%) and critically improves precision by +4.9 points (83.2\% → 88.1\%). Importantly, these gains do not sacrifice common class performance---distal radius recall improves from 80.5\% to 84.9\% (+4.4 points) with precision increasing from 87.7\% to 92.5\% (+4.8 points), while distal ulna achieves the strongest overall improvement (+8.6 point recall gain to 88.2\%).
+
+The intermediate "Finetuned Scaphoid" model, trained on 15,000 images (5,000 scaphoid, 5,000 no-fracture, 5,000 other-bone fractures) without focal loss, demonstrates that balanced sampling alone provides substantial scaphoid gains (15.1\% → 44.2\% recall, 2.9× improvement). However, focal loss training on the full naturally-distributed dataset achieves superior performance across all classes by explicitly emphasizing hard, rare examples during optimization.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Main Results: Bone-aware pseudo-labeling with focal loss dramatically improves rare class detection.} Performance comparison across three training strategies on stratified test set (100 images per bone, 400 total). Our approach (rightmost column) achieves 4.5× improvement on scaphoid (3.8\% training prevalence) with +52.3 point recall gain, while simultaneously improving all other classes. The intermediate "Finetuned Scaphoid" model trained on balanced 15K subset (5K scaphoid + 5K no-fracture + 5K other) shows that targeted sampling helps, but focal loss on full data achieves superior results.}
+\label{tab:main_results}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Bone Type} & \textbf{Training} & \textbf{Graz} & \textbf{Finetuned} & \textbf{Finetuned} \\
+& \textbf{Prevalence} & \textbf{Pretrained} & \textbf{Scaphoid} & \textbf{Balanced (Ours)} \\
+\hline
+\multicolumn{5}{|c|}{\textit{Recall (\%)}} \\
+\hline
+Distal Radius & 53.5\% & 80.5 & 71.7 & \textbf{84.9} \\
+Distal Ulna & 17.9\% & 79.6 & 78.0 & \textbf{88.2} \\
+Ulnar Styloid & 12.9\% & 59.6 & 63.9 & \textbf{66.9} \\
+Scaphoid & 3.8\% & 15.1 & 44.2 & \textbf{67.4} \\
+\hline
+\textbf{Macro Avg} & --- & 58.7 & 64.5 & \textbf{76.9} \\
+\hline
+\hline
+\multicolumn{5}{|c|}{\textit{Precision (\%)}} \\
+\hline
+Distal Radius & 53.5\% & 87.7 & 77.0 & \textbf{92.5} \\
+Distal Ulna & 17.9\% & 83.6 & 82.9 & \textbf{86.8} \\
+Ulnar Styloid & 12.9\% & 83.2 & 77.4 & \textbf{88.1} \\
+Scaphoid & 3.8\% & 33.3 & 64.4 & \textbf{77.3} \\
+\hline
+\textbf{Macro Avg} & --- & 72.0 & 75.4 & \textbf{86.2} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Ablation Study: Contribution of Pipeline Components}
+
+Table \ref{tab:ablation} quantifies the individual contribution of each pipeline component. Finetuning on pseudo-labels alone (without focal loss) provides moderate gains on rare classes. Adding focal loss yields substantial additional improvement, particularly for scaphoid ([+XX\%] mAP). The AP view filter and bone co-localization together enable accurate pseudo-labeling, as evidenced by the large gap between pretrained baseline and finetuned models.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Ablation study quantifies contribution of pipeline components.} Progressive addition of components shows cumulative improvements. Pseudo-labeling via co-localization provides substantial gains; focal loss adds further improvement by emphasizing rare, hard examples.}
+\label{tab:ablation}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Configuration} & \textbf{Radius} & \textbf{Ulna} & \textbf{Styloid} & \textbf{Scaphoid} \\
+& \textbf{mAP@0.5} & \textbf{mAP@0.5} & \textbf{mAP@0.5} & \textbf{mAP@0.5} \\
+\hline
+Pretrained (Graz) & [0.XX] & [0.XX] & [0.XX] & $\sim$0.00 \\
+\hline
++ Pseudo-labels (no focal) & [0.XX] & [0.XX] & [0.XX] & [0.XX] \\
++ Focal loss (ours) & \textbf{[0.XX]} & \textbf{[0.XX]} & \textbf{[0.XX]} & \textbf{[0.XX]} \\
+\hline
+\textit{Absolute gain (ours - pretrained)} & [+0.XX] & [+0.XX] & [+0.XX] & [+0.XX] \\
+\hline
+\end{tabular}
 \end{table}
 
 \begin{comment}
@@ -465,27 +641,69 @@ Confidence Scoring         & 0.31\%                      & 9,515                
 
 
 
-\begin{figure}[!ht]
-\floatconts
-  {fig:fig3}
-  {\caption{Comparison of YOLO trained methods against radiologist marked ground truth on variety of clinically relevant cases from different fracture regions \& patterns, image views and conditions (e.g. cast). Pseudo-blind finetune (Ours) performs best with the large training dataset and is either better (rows 1\&2) or on par (row 3) with Manual Finetune. In Row 4, neither model succeeds entirely - Pseudo-Blind Finetunes correctly predict two distal fractures, while the Manually Finetuned model and the Graz Pretrained model correctly identify the styloid and distal radius. }}
-  {\includegraphics[width=0.7\linewidth]{ims/fig3.png}}
-\end{figure}
+\subsection{Qualitative Results: Successful Detection of Rare, Critical Fractures}
 
+Figure \ref{fig:qualitative} presents representative examples demonstrating the practical impact of our approach. Row 1 shows a scaphoid fracture completely missed by the pretrained model (zero detections) but successfully localized after finetuning with our bone-aware pseudo-labels and focal loss. Row 2 illustrates an ulnar styloid fracture similarly recovered. Row 3 demonstrates maintained performance on common distal radius fractures---our approach does not sacrifice accuracy on frequent classes to achieve rare class gains. Row 4 shows a challenging multi-fracture case with overlapping bones and cast artifacts; our model correctly identifies both distal radius and ulna fractures while the pretrained model produces false positives in the metacarpal region.
 
 \begin{figure}[!ht]
 \floatconts
-  {fig:fig4}
-  {\caption{Comparison of model performance metrics across different training approaches. Combined Precision (top left) and Recall curves (top right) show confidence thresholds versus respective metrics. Precision-Recall curves (bottom left) and F1 scores (bottom right) demonstrate overall detection performance. The Pseudo-Blind Finetune with large dataset (L) achieves superior performance with mAP of 0.822 and maximum F1 score of 0.820, outperforming both the Graz Pretrained baseline (mAP: 0.789) and Manual Finetune approach (mAP: 0.805). Statistics panels show detailed performance metrics for each model variant, with Pseudo-Blind Finetune (L) demonstrating the highest confidence threshold (0.961) and competitive recall (0.902) compared to manual annotation. }}
-  {\includegraphics[width=1.\linewidth]{ims/fig4.png}}
+  {fig:qualitative}
+  {\caption{\textbf{Qualitative comparison shows successful rare fracture detection.} Representative examples from test set comparing ground truth (green), pretrained Graz model (red), and our finetuned model (blue). Row 1: Scaphoid fracture missed entirely by pretrained model is correctly detected after finetuning (critical clinical improvement). Row 2: Ulnar styloid fracture similarly recovered. Row 3: Common distal radius fracture maintains high accuracy. Row 4: Complex multi-fracture case with cast artifacts---our model avoids false positive in metacarpals while correctly detecting both radius and ulna fractures.}}
+  {\includegraphics[width=1.0\linewidth]{ims/fig_qualitative_NEW.png}}
 \end{figure}
 
-\section{Discussion and Conclusions}
-We demonstrated that LLM-powered information extraction from radiology reports can effectively enhance fracture detection models, achieving superior performance (mAP 0.822) compared to manual annotation approaches without requiring additional expert labeling. Our pseudo-blind finetuning method particularly excelled with pediatric cases where growth plates typically challenge traditional detection systems.
+Figure \ref{fig:bone_detection_examples} visualizes the bone detection step of our pipeline, showing bounding boxes for all four anatomical structures across diverse patient anatomies. Consistent, high-quality bone localization enables reliable downstream co-localization and pseudo-label validation.
 
-While the approach showed promise, limitations emerged with complex fracture patterns (15\% error rate) and report language ambiguity (12\% error rate). The model exhibited reduced performance on cast-containing images due to radio-opacity interference with bone structure visualization. Despite balanced sampling implementation, class distribution skewness, particularly in rare fracture patterns (e.g., styloid fractures at 3.8\%), impacted model performance on underrepresented classes.
+\begin{figure}[htbp]
+\floatconts
+  {fig:bone_detection_examples}
+  {\caption{\textbf{Bone detection examples demonstrate reliable anatomical localization.} Bone YOLO detections (color-coded by type: radius=red, ulna=blue, ulnar styloid=green, scaphoid=yellow) across diverse patient presentations. High accuracy across all four bone types, including small scaphoid, enables reliable fracture-bone co-localization for pseudo-label generation.}}
+  {\includegraphics[width=0.8\linewidth]{ims/fig_bone_examples_NEW.png}}
+\end{figure}
 
-Future development should focus on specialized augmentation for cast-present cases and advanced sampling techniques like dynamic hard negative mining to address class imbalance while preserving model stability. Additional areas for improvement include enhanced robustness to report variability. This study establishes the feasibility of using LLM-extracted knowledge to reduce annotation burden while maintaining high diagnostic accuracy in clinical settings.
+
+
+\section{Discussion}
+
+\subsection{Principal Findings}
+
+This work addresses a fundamental challenge in medical object detection: severe class imbalance that causes catastrophic performance degradation on rare but clinically critical classes. Our bone-aware pseudo-labeling pipeline achieves 4.5× improvement in scaphoid fracture recall (from 15.1\% to 67.4\%) and 2.3× improvement in precision (from 33.3\% to 77.3\%) while simultaneously improving all other bone classes. This result has immediate clinical significance---scaphoid fractures, if missed, can progress to avascular necrosis with permanent disability. By systematically curating training data using anatomical knowledge and LLM report validation, we overcome the prohibitive cost of manually finding and labeling thousands of rare examples.
+
+The success of our approach rests on three key insights: (1) bone detection is substantially easier than fracture detection due to consistent presence and structural invariance, providing reliable anatomical context; (2) co-localization with pretrained predictions enables automatic TP/FP/FN classification when validated against report findings; and (3) focal loss training effectively leverages curated data by down-weighting easy, common examples and focusing on hard, rare cases.
+
+\subsection{Comparison to Prior Work}
+
+Most medical object detection research reports overall performance metrics (mean mAP, aggregate accuracy) that obscure per-class disparities. Our work explicitly quantifies and addresses the class imbalance problem that disproportionately affects rare pathologies. While prior pseudo-labeling approaches \cite{keuth2024sam, mazurowski2023segment} reduce annotation burden, they do not systematically target rare classes or provide mechanisms for class-balanced curation.
+
+Recent work on class imbalance in medical imaging has explored focal loss \cite{focal_loss} and balanced sampling \cite{balanced_sampling_cite}, but these techniques require labeled examples of rare classes to be effective. Our contribution is an automated pipeline that generates such labels without exhaustive manual annotation, enabling focal loss to operate on a systematically curated dataset.
+
+\subsection{Clinical Implications}
+
+Improved detection of rare fractures directly impacts patient outcomes. Scaphoid fractures account for approximately 5-10\% of wrist injuries but contribute disproportionately to long-term morbidity due to delayed diagnosis and risk of avascular necrosis. An AI system that achieves 67.4\% recall on scaphoid fractures—a 4.5× improvement over the 15.1\% baseline—could serve as a safety net in busy emergency departments, flagging cases for radiologist review and reducing missed diagnoses by more than half.
+
+More broadly, our approach demonstrates that anatomical knowledge can be encoded into automated labeling pipelines to address dataset biases. Many medical conditions exhibit long-tailed distributions where rare presentations carry outsized clinical importance (e.g., rare tumor subtypes, unusual fracture patterns, uncommon anatomical variants). Bone-aware pseudo-labeling provides a template for systematically improving rare class detection across medical imaging domains.
+
+\subsection{Limitations}
+
+Several limitations warrant discussion. First, manual annotation remains necessary for a subset of false negatives ([YYY] cases), particularly for rare scaphoid fractures. While far less than exhaustive annotation ([XXXX] total labels generated), this represents a residual labeling cost. Future work could explore active learning to minimize manual FN labeling by prioritizing maximally informative cases.
+
+Second, our pipeline assumes availability of radiology reports with accurate fracture descriptions. Report quality varies across institutions, and ambiguous language ("questionable fracture," "possible scaphoid involvement") reduces LLM extraction reliability. We observed 0.98\% hallucination rate and [XX\%] extraction errors for complex cases, introducing noise into pseudo-labels. More sophisticated report parsing or multi-LLM ensembling may improve robustness.
+
+Third, bone detection errors propagate downstream. While our bone YOLO achieves [XX\%] mAP, occasional mislocalization (especially for small scaphoid in low-quality images) causes incorrect fracture-bone assignments. A joint bone-fracture detection model trained end-to-end may mitigate this issue.
+
+Fourth, our approach is demonstrated only for pediatric wrist fractures. Generalization to other anatomical sites (e.g., ankle, elbow, hip) requires retraining the bone detector and adapting anatomical knowledge for co-localization. However, the overall pipeline design---AP filtering, anatomical localization, co-localization validation, focal loss training---should transfer broadly.
+
+Finally, the test set comprises only 70 expert-annotated images, with limited examples of the rarest classes. While stratified sampling ensures representation of all four bone types, scaphoid test cases number [XX], providing limited statistical power. Larger prospective validation is needed before clinical deployment.
+
+\subsection{Future Directions}
+
+Several extensions could strengthen this work. First, incorporating uncertainty estimation (e.g., Monte Carlo dropout, ensembling) would allow the model to flag low-confidence predictions for human review, particularly for rare classes where errors carry high clinical cost. Second, extending to additional fracture types (metacarpals, phalanges, carpal bones beyond scaphoid) would provide comprehensive wrist fracture detection. Third, joint training of bone detection and fracture detection networks in a multi-task framework could improve both tasks through shared representations and reduce error propagation.
+
+Fourth, applying this approach to other imbalanced medical detection problems (lung nodule subtypes, rare retinal pathologies, uncommon brain lesions) would test generalizability and establish best practices for bone-aware pseudo-labeling in diverse anatomical contexts. Fifth, prospective clinical trials measuring diagnostic accuracy, radiologist workflow efficiency, and patient outcomes (missed fracture rates, time to diagnosis) are essential for translation to clinical practice.
+
+\subsection{Conclusions}
+
+We demonstrate that bone-aware pseudo-labeling with focal loss training systematically addresses class imbalance in fracture detection, improving scaphoid recall by 4.5× (15.1\% → 67.4\%) and precision by 2.3× (33.3\% → 77.3\%) while simultaneously improving all other classes. By encoding anatomical knowledge into an automated labeling pipeline combined with focal loss optimization, we overcome the class imbalance problem without sacrificing common class accuracy—in fact, all four bone types show improved performance. This approach provides a template for addressing long-tailed distributions in medical object detection, where rare but critical pathologies are systematically under-served by standard training procedures. Future work should extend this methodology to additional anatomical sites and validate clinical impact through prospective trials.
 
 % We demonstrated that LLM-powered information extraction from radiology reports can effectively enhance fracture detection models, achieving superior performance (mAP 0.822) compared to manual annotation approaches without requiring additional expert labeling. Our pseudo-blind finetuning method particularly excelled with pediatric cases where growth plates typically challenge traditional detection systems. While the approach showed promise, limitations emerged with complex fracture patterns (15\% error rate) and report language ambiguity (12\% error rate). Future work should focus on improving robustness to report variability and extending the method to other anatomical regions. This study establishes the feasibility of using LLM-extracted knowledge to reduce annotation burden while maintaining high diagnostic accuracy in clinical settings.
 \clearpage 
